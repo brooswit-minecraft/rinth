@@ -5,6 +5,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      server_id:
+        description: >-
+          Real, disposable Modrinth server id to run the destructive
+          servers power/upstream/exec integration tests against (sets
+          RINTH_TEST_SERVER_ID for the integration job). Leave empty to run
+          the dispatched job without them — they self-skip cleanly.
+        required: false
+        type: string
 
 jobs:
   typecheck:
@@ -69,3 +78,4 @@ jobs:
       - run: bun run test:integration
         env:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          RINTH_TEST_SERVER_ID: ${{ inputs.server_id }}

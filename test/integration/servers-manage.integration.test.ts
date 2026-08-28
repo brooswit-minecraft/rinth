@@ -36,6 +36,16 @@ interface ServerJson {
   upstream: { kind: string; project_id: string; version_id: string } | null;
 }
 
+/**
+ * On success the result is on stdout (`log`); on failure stdout is left
+ * empty by the `--json` contract and the (KAN-735 item 4: now status- and
+ * endpoint-carrying) error is on stderr (`err`) instead — pick whichever
+ * one actually has the detail worth logging.
+ */
+function detailFor(code: number, log: string, err: string): string {
+  return code === ExitCode.Ok ? log : err;
+}
+
 describe("integration: servers get", () => {
   test.skipIf(!hasModrinthToken)(
     "reports server details for a real server id, with no sftp/panel credentials in the output",
@@ -104,8 +114,9 @@ describe("integration: servers power / upstream (DESTRUCTIVE — gated on RINTH_
         const out = captureOutput();
         const powerCode = await run(["--json", "servers", "power", id, "restart"]);
         const powerLog = out.lastLog();
+        const powerErr = out.lastErr();
         out.restore();
-        console.log(`SERVERS POWER: restart => exit ${powerCode}: ${powerLog}`);
+        console.log(`SERVERS POWER: restart => exit ${powerCode}: ${detailFor(powerCode, powerLog, powerErr)}`);
         expect([ExitCode.Ok, ExitCode.AuthMissing, ExitCode.NotFound, ExitCode.ApiError] as number[]).toContain(
           powerCode,
         );
@@ -130,8 +141,11 @@ describe("integration: servers power / upstream (DESTRUCTIVE — gated on RINTH_
             before.upstream.version_id,
           ]);
           const upstreamLog = upstreamOut.lastLog();
+          const upstreamErr = upstreamOut.lastErr();
           upstreamOut.restore();
-          console.log(`SERVERS UPSTREAM: round-trip re-point => exit ${upstreamCode}: ${upstreamLog}`);
+          console.log(
+            `SERVERS UPSTREAM: round-trip re-point => exit ${upstreamCode}: ${detailFor(upstreamCode, upstreamLog, upstreamErr)}`,
+          );
           expect([ExitCode.Ok, ExitCode.AuthMissing, ExitCode.NotFound, ExitCode.ApiError] as number[]).toContain(
             upstreamCode,
           );
@@ -146,8 +160,11 @@ describe("integration: servers power / upstream (DESTRUCTIVE — gated on RINTH_
         const restoreOut = captureOutput();
         const restoreCode = await run(["--json", "servers", "power", id, "restart"]);
         const restoreLog = restoreOut.lastLog();
+        const restoreErr = restoreOut.lastErr();
         restoreOut.restore();
-        console.log(`SERVERS POWER/UPSTREAM: final restart to leave ${id} running => exit ${restoreCode}: ${restoreLog}`);
+        console.log(
+          `SERVERS POWER/UPSTREAM: final restart to leave ${id} running => exit ${restoreCode}: ${detailFor(restoreCode, restoreLog, restoreErr)}`,
+        );
       }
     },
   );

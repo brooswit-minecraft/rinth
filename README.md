@@ -38,7 +38,10 @@ Every command accepts a global `--json` flag. When set, the command writes a
 single JSON value to stdout and **nothing else** — no banners, no progress,
 no human text — so output is safe to pipe into `jq` or another program.
 Human-readable text goes to stdout when `--json` is not set. Errors always go
-to stderr, in both modes.
+to stderr, in both modes; on success, stdout carries exactly one JSON value
+and stderr is empty, and on failure stdout is left empty (there was no
+result to print) while stderr carries the error — see "Errors under
+`--json`" below for that error's exact shape.
 
 ## Redaction
 
@@ -245,6 +248,37 @@ token (`auth-incorrect`) or never confirming it within the internal
 authentication timeout both map to exit code 3, the same as a rejected
 `MODRINTH_TOKEN` elsewhere. A refused/failed/never-established socket
 connection maps to exit code 6 (network error).
+
+### Errors under `--json`
+
+Every API-backed command routes its failures through the same `CliError`,
+which — in addition to the exit code above — carries the HTTP status (`null`
+for a non-HTTP failure, e.g. a usage error or a socket-level failure) and the
+`"<METHOD> <path>"` of the request that failed (`null` when there was none).
+
+- **Plain text** (`--json` not set): the stderr message includes both, e.g.
+
+  ```
+  HTTP 403 GET /modrinth/v0/servers/<id>: Forbidden
+  ```
+
+  When neither a status nor an endpoint applies (e.g. a usage error), the
+  message is unprefixed, as before.
+
+- **`--json`**: on any error, stdout is left empty (there was no result to
+  print) and a single JSON value is written to stderr:
+
+  ```json
+  {"error":{"code":3,"status":403,"endpoint":"GET /modrinth/v0/servers/<id>","message":"HTTP 403 GET /modrinth/v0/servers/<id>: Forbidden"}}
+  ```
+
+  `code` is the process exit code (same table as above); `status` is the raw
+  HTTP status or `null`; `endpoint` is `"<METHOD> <path>"` or `null`.
+
+This goes through the same `src/output.ts`/`src/redact.ts` path as every
+other write — there is no separate write path to the terminal, and a token
+embedded in an error message is scrubbed here exactly as it would be
+anywhere else (see `test/unit/cli.test.ts`).
 
 ## Tests
 

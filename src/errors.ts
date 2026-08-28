@@ -13,13 +13,24 @@ export const ExitCode = {
 
 export type ExitCode = (typeof ExitCode)[keyof typeof ExitCode];
 
+export interface CliErrorOptions {
+  /** The HTTP status the request failed with, or `null` for a non-HTTP/network failure. */
+  status?: number | null;
+  /** `"<METHOD> <path>"` of the request that failed, or `null` when there is none (e.g. a usage error). */
+  endpoint?: string | null;
+}
+
 export class CliError extends Error {
   readonly exitCode: ExitCode;
+  readonly status: number | null;
+  readonly endpoint: string | null;
 
-  constructor(message: string, exitCode: ExitCode) {
+  constructor(message: string, exitCode: ExitCode, options: CliErrorOptions = {}) {
     super(message);
     this.name = "CliError";
     this.exitCode = exitCode;
+    this.status = options.status ?? null;
+    this.endpoint = options.endpoint ?? null;
   }
 }
 

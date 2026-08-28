@@ -15,12 +15,15 @@ import { hasModrinthToken } from "./harness.ts";
 
 describe("integration: whoami (labrinth /user auth spike)", () => {
   test.skipIf(!hasModrinthToken)("reports whether the PAT is accepted by labrinth /user", async () => {
-    // mockImplementation forwards to the real console methods (so CI logs
-    // still show the output) while also recording calls for inspection —
-    // a bare spyOn() with no mockImplementation records nothing here.
+    // The labrinth /user response can carry the account's email
+    // (`Labrinth.Users.v2.User.email`) — this repo is public, so the
+    // spy here must NOT forward console.log's raw args to the real
+    // console (that would put the full --json body, email included, into
+    // a public Actions log). Only `id`/`username`, pulled out below, are
+    // ever printed for real.
     const realLog = console.log.bind(console);
     const realError = console.error.bind(console);
-    const logSpy = spyOn(console, "log").mockImplementation((...args) => realLog(...args));
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
     const errSpy = spyOn(console, "error").mockImplementation((...args) => realError(...args));
 
     const code = await run(["--json", "whoami"]);
@@ -33,7 +36,7 @@ describe("integration: whoami (labrinth /user auth spike)", () => {
     if (code === ExitCode.Ok) {
       const user = JSON.parse(lastLog) as { id?: unknown; username?: unknown };
       expect(typeof user.id).toBe("string");
-      console.log(`AUTH SPIKE: labrinth GET /v2/user (Bearer PAT) => accepted (200), user id ${user.id}`);
+      realLog(`AUTH SPIKE: labrinth GET /v2/user (Bearer PAT) => accepted (200), id ${user.id}, username ${user.username}`);
     } else if (code === ExitCode.AuthMissing) {
       console.log(`AUTH SPIKE: labrinth GET /v2/user (Bearer PAT) => rejected (401/403). ${lastErr}`);
       expect(code).toBe(ExitCode.AuthMissing);
