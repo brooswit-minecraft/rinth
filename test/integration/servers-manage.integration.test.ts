@@ -219,42 +219,15 @@ describe("integration: servers power / upstream (DESTRUCTIVE — gated on RINTH_
             `SERVERS GET: same nonexistent server id (403-vs-404 baseline) => exit ${bogusGetCode}: ${detailFor(bogusGetCode, bogusGetLog, bogusGetErr)}`,
           );
 
-          // Second, DIFFERENT real public modpack against the REAL server
-          // (epic-authorized, KAN-735 comment on this ticket): tests
-          // whether the 404 is specific to the Create+ project/version pair
-          // (pair-dependent, e.g. genuinely "that modpack not found") or
-          // happens regardless of which real pack is requested
-          // (pair-independent — points at the route/identity/first-install
-          // hypotheses instead). Still within the human's ground rules: the
-          // server is confirmed fresh/empty, and a 2xx here would just
-          // install a second real, well-known public modpack — acceptable,
-          // not a failure mode. The `finally` below still restarts either way.
-          const SECOND_PROBE_PROJECT = "1KVo5zza"; // "Fabulously Optimized" — real, public, well-known.
-          const SECOND_PROBE_VERSION = "8ikTAvpG"; // a real version of that project.
-          const secondOut = captureOutput();
-          const secondCode = await run([
-            "--json",
-            "servers",
-            "upstream",
-            id,
-            "--project",
-            SECOND_PROBE_PROJECT,
-            "--version",
-            SECOND_PROBE_VERSION,
-          ]);
-          const secondLog = secondOut.lastLog();
-          const secondErr = secondOut.lastErr();
-          secondOut.restore();
+          // A second, DIFFERENT real public modpack ("Fabulously Optimized",
+          // 1KVo5zza/8ikTAvpG) against the REAL server was also
+          // epic-authorized and already ran once (run 33203193133): same
+          // 404 "not found" as the first pack, ruling out a pair-specific
+          // cause (recorded on KAN-735). Per the same "don't repeat a
+          // real-server write attempt" guardrail as the first probe above,
+          // this branch does not re-run it on future dispatches.
           console.log(
-            `SERVERS UPSTREAM: second real modpack against the real server (pair-dependence check) => exit ${secondCode}: ${detailFor(secondCode, secondLog, secondErr)}`,
-          );
-          if (secondCode === ExitCode.Ok) {
-            console.log(
-              `SERVERS UPSTREAM: *** LOUD NOTICE *** the second forced reinstall probe SUCCEEDED on ${id}. Report immediately on KAN-735/KAN-720/KAN-714.`,
-            );
-          }
-          expect([ExitCode.Ok, ExitCode.AuthMissing, ExitCode.NotFound, ExitCode.ApiError] as number[]).toContain(
-            secondCode,
+            `SERVERS UPSTREAM: the second epic-authorized real-server reinstall probe (a different real modpack) already ran too (see KAN-735); not repeating it`,
           );
         }
       } finally {
