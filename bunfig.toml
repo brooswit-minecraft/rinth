@@ -1,0 +1,6 @@
+[test]
+# Coverage is only collected/enforced when `--coverage` is passed (the
+# `test:coverage` script), not on a plain `bun test` — otherwise the
+# integration job's much smaller file set would trip the 80% threshold.
+coverageThreshold = 0.8
+coverageReporter = ["text", "lcov"]
