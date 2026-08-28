@@ -57,14 +57,16 @@ diagnostics go to stderr in both modes.
 - **Unit** (`test/unit/`): pure logic, no network, runs offline.
 
   ```sh
-  bun run test:unit      # or: bun test
-  bun run test:coverage  # unit tests + 80% coverage gate
+  bun run test           # test/unit only
+  bun run test:coverage  # unit tests + 80% coverage gate (test/unit only)
   ```
 
-- **Integration** (`test/integration/`): exercises the live Modrinth API.
-  Every integration test skips cleanly — logging
+- **Integration** (`test/integration/`): exercises the live Modrinth API, run
+  separately from `test`/`test:coverage` (and excluded from the coverage
+  gate). Every integration test skips cleanly — logging
   `MODRINTH_TOKEN not set — skipping integration tests` — when
-  `MODRINTH_TOKEN` isn't set, so `bun test` always passes offline. The same
+  `MODRINTH_TOKEN` isn't set, so the bare `bun test` (which picks up every
+  `*.test.ts` file, unit and integration) always passes offline. The same
   applies to any other env-gated fixture (e.g. `MODRINTH_PROJECT_ID`,
   `MODRINTH_SERVER_ID`): tests that need them skip cleanly, they never fail,
   when those variables are absent.
