@@ -174,15 +174,39 @@ rinth --json servers upstream ff783f0f-ec3c-4037-b39f-452ce590891d \
 whether `POST /modrinth/v0/servers/:id/reinstall` restarts the server as
 part of reinstalling, or leaves it in whatever power state it was already
 in — **the docs simply do not say**, for either a loader or a modpack
-reinstall. This environment has no `MODRINTH_TOKEN`, so live behavior
-against the real server (`ff783f0f-ec3c-4037-b39f-452ce590891d`) could not
-be observed here either. Absent evidence that reinstall self-restarts,
-`--restart` is implemented as an explicit, separate `power(id, 'Restart')`
-call made *after* the upstream is set, so a caller who passes it gets a
-guaranteed bounce onto the new upstream regardless of what `reinstall` does
-on its own — the safe default until this is confirmed live one way or the
-other (see the code comment above `upstream()` in
-`src/commands/servers.ts`).
+reinstall. Live behavior could not settle this either — see the blocker
+below. Absent evidence that reinstall self-restarts, `--restart` is
+implemented as an explicit, separate `power(id, 'Restart')` call made
+*after* the upstream is set, so a caller who passes it gets a guaranteed
+bounce onto the new upstream regardless of what `reinstall` does on its
+own — the safe default until this is confirmed live one way or the other
+(see the code comment above `upstream()` in `src/commands/servers.ts`).
+
+**Known live blocker (KAN-735), measured against a real server:** with the
+org's `MODRINTH_TOKEN` PAT, `servers list` succeeds (200) but every
+per-server endpoint this CLI calls is denied — `get`/`power`/the console
+WebSocket auth all return 403 Forbidden with an empty body, while
+`upstream`'s `reinstall` call returns 404 Not Found with a small JSON body
+(not 403; `resolveProjectId` against labrinth succeeded first, so the 404
+is from Archon's `/reinstall` route itself, not project/slug resolution).
+This is not fixable by editing the PAT's scopes — labrinth's PAT scope enum
+has no `SERVERS_*` scope at all, so per-server access most likely requires
+session-level (browser-issued JWT) identity a PAT cannot carry.
+
+Why `reinstall` 404s instead of 403ing like the rest is unresolved — three
+hypotheses, none confirmed: (A) the v0 `/reinstall` route no longer exists
+(source research on the `modrinth/code` frontend found no current caller of
+`servers_v0.reinstall`; installs there go through a newer `content_v1` API
+instead), though the JSON error body (vs the other three's empty body)
+argues Archon evaluated *something*, weakening a pure "route is gone" read;
+(B) the route exists but 404s to hide an unauthorized resource rather than
+reveal it via 403; (C) `reinstall` only applies once an upstream already
+exists — the frontend's *first* install on a fresh server goes through
+`content_v1`, not `reinstall` — which would make a 404 on this fresh, empty
+server expected regardless of auth. `upstream` is kept as built (it's
+`@modrinth/api-client`'s documented call, and unreachable either way
+today); migrating it to the v1 content API, once one of the above is
+confirmed, is a follow-up not done here.
 
 ### `rinth servers exec <id> <command...>`
 

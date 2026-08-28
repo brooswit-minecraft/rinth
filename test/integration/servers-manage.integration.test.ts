@@ -163,58 +163,30 @@ describe("integration: servers power / upstream (DESTRUCTIVE — gated on RINTH_
           // KAN-735 item 1(c): `upstream`/`reinstall` was the one per-server
           // endpoint never directly exercised (get/power/ws all 403, but a
           // round-trip needs a known existing modpack to restore, which a
-          // blocked `get` can't supply). The epic explicitly authorized ONE
-          // forced attempt here (KAN-735 comments 14565/14568/14570) against
-          // a REAL, well-known public modpack — not a fake id, so that IF it
-          // unexpectedly succeeds the server ends up in a valid installed
-          // state rather than a broken one — specifically because this
-          // server is confirmed fresh/empty (the `servers list` payload
-          // shows loader/loader_version/mc_version all null), which is
-          // exactly the condition the human's ground rules authorize
-          // upstream experiments under. This branch only runs when there is
-          // no existing modpack to safely round-trip instead (the `if`
-          // above), so it never overwrites a real, already-configured pack.
+          // blocked `get` can't supply). The epic authorized exactly ONE
+          // forced attempt against the real server (KAN-735 comments
+          // 14565/14568/14570), using a real public modpack rather than a
+          // fake id so a surprise success would leave the server in a valid
+          // state — that attempt already ran (run 33202645270) and got
+          // HTTP 404 "not found" on POST /modrinth/v0/servers/<id>/reinstall
+          // (recorded on KAN-735). Per that guardrail this branch does NOT
+          // repeat the real-server attempt on every future run; it only
+          // runs the safe disambiguation probe below.
           const FORCED_PROBE_PROJECT = "t1tOiUHZ"; // "Create+" — real, public, ~426k downloads; same project schematic (KAN-717) already used.
           const FORCED_PROBE_VERSION = "BSg2ZS8u"; // "Create+ 6.0.0 Alpha f" — a real version of that project.
           console.log(
-            `SERVERS UPSTREAM: ${id} has no known existing modpack to round-trip (${before ? JSON.stringify(before.upstream) : "get was blocked"}) — attempting the ONE epic-authorized forced probe against a real public modpack instead`,
-          );
-          const upstreamOut = captureOutput();
-          const upstreamCode = await run([
-            "--json",
-            "servers",
-            "upstream",
-            id,
-            "--project",
-            FORCED_PROBE_PROJECT,
-            "--version",
-            FORCED_PROBE_VERSION,
-          ]);
-          const upstreamLog = upstreamOut.lastLog();
-          const upstreamErr = upstreamOut.lastErr();
-          upstreamOut.restore();
-          console.log(
-            `SERVERS UPSTREAM: forced reinstall probe => exit ${upstreamCode}: ${detailFor(upstreamCode, upstreamLog, upstreamErr)}`,
-          );
-          if (upstreamCode === ExitCode.Ok) {
-            console.log(
-              `SERVERS UPSTREAM: *** LOUD NOTICE *** the forced reinstall probe SUCCEEDED on ${id} — reinstall is reachable while get/power/ws are not. This changes the answer for KAN-717/schematic. Report immediately on KAN-735/KAN-720/KAN-714.`,
-            );
-          }
-          expect([ExitCode.Ok, ExitCode.AuthMissing, ExitCode.NotFound, ExitCode.ApiError] as number[]).toContain(
-            upstreamCode,
+            `SERVERS UPSTREAM: ${id} has no known existing modpack to round-trip (${before ? JSON.stringify(before.upstream) : "get was blocked"}) — the one epic-authorized real-server reinstall probe already ran (see KAN-735); not repeating it`,
           );
 
-          // KAN-735 item 1(c) follow-up: a 404 (not 403) on the real probe
-          // above is ambiguous between "our client built the wrong
-          // route/body" and "Archon rejected THIS request specifically"
-          // (e.g. hides an unauthorized resource behind 404 rather than
-          // 403, same family as the other three denials, just a different
-          // status). Comparing against an OBVIOUSLY NONEXISTENT server id
-          // (same real project/version) disambiguates safely: no real
-          // server can ever match this id, on this account or anyone
-          // else's, so this can never mutate anything — it is safe to run
-          // on every dispatch, not just this one-time probe.
+          // KAN-735 item 1(c) follow-up: the real probe's 404 (not 403) is
+          // ambiguous between "our client built the wrong route/body" and
+          // "Archon rejected THIS request specifically" (e.g. hides an
+          // unauthorized resource behind 404 rather than 403, same family
+          // as the other three denials, just a different status).
+          // Comparing against an OBVIOUSLY NONEXISTENT server id (same real
+          // project/version) disambiguates safely: no real server can ever
+          // match this id, on this account or anyone else's, so this can
+          // never mutate anything — safe to run on every dispatch.
           const BOGUS_SERVER_ID = "00000000-0000-0000-0000-000000000000";
           const bogusOut = captureOutput();
           const bogusCode = await run([
@@ -232,6 +204,57 @@ describe("integration: servers power / upstream (DESTRUCTIVE — gated on RINTH_
           bogusOut.restore();
           console.log(
             `SERVERS UPSTREAM: same probe against a nonexistent server id (route-vs-auth control) => exit ${bogusCode}: ${detailFor(bogusCode, bogusLog, bogusErr)}`,
+          );
+
+          // 403-vs-404 baseline on the same bogus id: does `get` (already
+          // measured 403 on the real id) behave the same way here, or does
+          // Archon distinguish "exists but forbidden" (403) from "doesn't
+          // exist" (404) at the routing layer? Also zero risk.
+          const bogusGetOut = captureOutput();
+          const bogusGetCode = await run(["--json", "servers", "get", BOGUS_SERVER_ID]);
+          const bogusGetLog = bogusGetOut.lastLog();
+          const bogusGetErr = bogusGetOut.lastErr();
+          bogusGetOut.restore();
+          console.log(
+            `SERVERS GET: same nonexistent server id (403-vs-404 baseline) => exit ${bogusGetCode}: ${detailFor(bogusGetCode, bogusGetLog, bogusGetErr)}`,
+          );
+
+          // Second, DIFFERENT real public modpack against the REAL server
+          // (epic-authorized, KAN-735 comment on this ticket): tests
+          // whether the 404 is specific to the Create+ project/version pair
+          // (pair-dependent, e.g. genuinely "that modpack not found") or
+          // happens regardless of which real pack is requested
+          // (pair-independent — points at the route/identity/first-install
+          // hypotheses instead). Still within the human's ground rules: the
+          // server is confirmed fresh/empty, and a 2xx here would just
+          // install a second real, well-known public modpack — acceptable,
+          // not a failure mode. The `finally` below still restarts either way.
+          const SECOND_PROBE_PROJECT = "1KVo5zza"; // "Fabulously Optimized" — real, public, well-known.
+          const SECOND_PROBE_VERSION = "8ikTAvpG"; // a real version of that project.
+          const secondOut = captureOutput();
+          const secondCode = await run([
+            "--json",
+            "servers",
+            "upstream",
+            id,
+            "--project",
+            SECOND_PROBE_PROJECT,
+            "--version",
+            SECOND_PROBE_VERSION,
+          ]);
+          const secondLog = secondOut.lastLog();
+          const secondErr = secondOut.lastErr();
+          secondOut.restore();
+          console.log(
+            `SERVERS UPSTREAM: second real modpack against the real server (pair-dependence check) => exit ${secondCode}: ${detailFor(secondCode, secondLog, secondErr)}`,
+          );
+          if (secondCode === ExitCode.Ok) {
+            console.log(
+              `SERVERS UPSTREAM: *** LOUD NOTICE *** the second forced reinstall probe SUCCEEDED on ${id}. Report immediately on KAN-735/KAN-720/KAN-714.`,
+            );
+          }
+          expect([ExitCode.Ok, ExitCode.AuthMissing, ExitCode.NotFound, ExitCode.ApiError] as number[]).toContain(
+            secondCode,
           );
         }
       } finally {
