@@ -204,6 +204,35 @@ describe("integration: servers power / upstream (DESTRUCTIVE — gated on RINTH_
           expect([ExitCode.Ok, ExitCode.AuthMissing, ExitCode.NotFound, ExitCode.ApiError] as number[]).toContain(
             upstreamCode,
           );
+
+          // KAN-735 item 1(c) follow-up: a 404 (not 403) on the real probe
+          // above is ambiguous between "our client built the wrong
+          // route/body" and "Archon rejected THIS request specifically"
+          // (e.g. hides an unauthorized resource behind 404 rather than
+          // 403, same family as the other three denials, just a different
+          // status). Comparing against an OBVIOUSLY NONEXISTENT server id
+          // (same real project/version) disambiguates safely: no real
+          // server can ever match this id, on this account or anyone
+          // else's, so this can never mutate anything — it is safe to run
+          // on every dispatch, not just this one-time probe.
+          const BOGUS_SERVER_ID = "00000000-0000-0000-0000-000000000000";
+          const bogusOut = captureOutput();
+          const bogusCode = await run([
+            "--json",
+            "servers",
+            "upstream",
+            BOGUS_SERVER_ID,
+            "--project",
+            FORCED_PROBE_PROJECT,
+            "--version",
+            FORCED_PROBE_VERSION,
+          ]);
+          const bogusLog = bogusOut.lastLog();
+          const bogusErr = bogusOut.lastErr();
+          bogusOut.restore();
+          console.log(
+            `SERVERS UPSTREAM: same probe against a nonexistent server id (route-vs-auth control) => exit ${bogusCode}: ${detailFor(bogusCode, bogusLog, bogusErr)}`,
+          );
         }
       } finally {
         // Ground rule from the human: always end with the server running,
