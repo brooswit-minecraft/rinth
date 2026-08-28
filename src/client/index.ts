@@ -60,6 +60,19 @@ export interface ConsoleSocket {
   onClose(handler: () => void): void;
 }
 
+/**
+ * Filters for `listVersions`, forwarded to labrinth's
+ * `GET /project/{id|slug}/version` (v2). `channel` (release/beta/alpha) is
+ * NOT a server-side filter on this endpoint — verified against
+ * https://docs.modrinth.com — so it is applied client-side by the command,
+ * not sent as a request param.
+ */
+export interface VersionFilters {
+  loaders?: string[];
+  game_versions?: string[];
+  limit?: number;
+}
+
 export interface Transport {
   /** GET labrinth `/user` (v2) — the authenticated user. */
   getCurrentUser(): Promise<Labrinth.Users.v2.User>;
@@ -77,6 +90,8 @@ export interface Transport {
   getWebSocketAuth(serverId: string): Promise<Archon.Websocket.v0.WSAuth>;
   /** Open a socket to a console URL (from `getWebSocketAuth`). Fake-able so `servers exec` is testable offline. */
   openSocket(url: string): ConsoleSocket;
+  /** GET labrinth `/project/{idOrSlug}/version` (v2) — a project's versions, unmodified API shape. */
+  listVersions(project: string, filters?: VersionFilters): Promise<Labrinth.Versions.v2.Version[]>;
 }
 
 export { createRealTransport } from "./real.ts";

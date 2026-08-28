@@ -3,6 +3,7 @@
 
 import { serversCommand } from "./servers.ts";
 import type { Command } from "./types.ts";
+import { versionsCommand } from "./versions.ts";
 import { whoamiCommand } from "./whoami.ts";
 
 export type { Command, CommandContext } from "./types.ts";
@@ -10,4 +11,5 @@ export type { Command, CommandContext } from "./types.ts";
 export const commands: Readonly<Record<string, Command>> = {
   whoami: whoamiCommand,
   servers: serversCommand,
+  versions: versionsCommand,
 };

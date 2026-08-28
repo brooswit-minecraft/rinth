@@ -23,7 +23,14 @@ import {
 import type { Archon, AuthConfig, Labrinth } from "@modrinth/api-client";
 import { requireToken } from "../auth.ts";
 import { CliError, exitCodeForApiError } from "../errors.ts";
-import type { ConsoleSocket, PowerAction, PublicServer, ServerDetail, Transport } from "./index.ts";
+import type {
+  ConsoleSocket,
+  PowerAction,
+  PublicServer,
+  ServerDetail,
+  Transport,
+  VersionFilters,
+} from "./index.ts";
 
 /**
  * Exported for unit testing offline — maps a caught API error to a CliError
@@ -185,5 +192,11 @@ export function createRealTransport(): Transport {
       call(() => client.archon.servers_v0.getWebSocketAuth(serverId), `GET /modrinth/v0/servers/${serverId}/ws`),
 
     openSocket: (url) => wrapWebSocket(new WebSocket(url)),
+
+    listVersions: (project: string, filters?: VersionFilters) =>
+      call(
+        () => client.labrinth.versions_v2.getProjectVersions(project, filters),
+        `GET /v2/project/${encodeURIComponent(project)}/version`,
+      ),
   };
 }

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/). CI
 enforces that this file has a `## [<version>]` heading matching the
 `version` field in `package.json` — see README.md.
 
+## [0.4.0] - 2026-08-28
+
+### Added
+
+- `rinth versions list <project> [--loader <l>] [--game-version <gv>]
+  [--channel release|beta|alpha] [--limit <n>]` — labrinth v2 `GET
+  /project/{id|slug}/version` via `client.labrinth.versions_v2.getProjectVersions()`.
+  `--loader`/`--game-version` are repeatable and forwarded as server-side
+  filters; `--channel` is applied client-side against `version_type`
+  because the endpoint does not support it as a filter (verified against
+  the live docs and the API client's request-building code). Human output
+  is an aligned table (id, version_number, channel, loaders, game
+  versions, date, primary file name); `--json` prints the unmodified API
+  array. An empty result is not an error — it prints a message and exits
+  0.
+- `rinth versions latest <project> [--loader <l>] [--game-version <gv>]
+  [--channel <c>]` — same filtering, then picks the newest match by
+  parsing and comparing `date_published` explicitly. The live API
+  empirically returns versions pre-sorted descending by `date_published`,
+  but that is not documented behavior, so this does not rely on response
+  order. No match exits 4 (`ExitCode.NotFound`).
+- `Transport#listVersions` (`src/client/index.ts` + `real.ts` + `fake.ts`):
+  the new command-shaped transport method both version commands share,
+  with a `VersionFilters` shape (`loaders`, `game_versions`, `limit`) that
+  maps 1:1 onto the API client's own filter params.
+
 ## [0.3.0] - 2026-08-28
 
 ### Added
