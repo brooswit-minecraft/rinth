@@ -9,6 +9,21 @@ describe("CliError", () => {
     expect(err.message).toBe("not found");
     expect(err.exitCode).toBe(ExitCode.NotFound);
   });
+
+  test("defaults status and endpoint to null when not given (e.g. a usage error)", () => {
+    const err = new CliError("bad args", ExitCode.Usage);
+    expect(err.status).toBeNull();
+    expect(err.endpoint).toBeNull();
+  });
+
+  test("carries status and endpoint when given", () => {
+    const err = new CliError("Forbidden", ExitCode.AuthMissing, {
+      status: 403,
+      endpoint: "GET /modrinth/v0/servers/srv_123",
+    });
+    expect(err.status).toBe(403);
+    expect(err.endpoint).toBe("GET /modrinth/v0/servers/srv_123");
+  });
 });
 
 describe("exitCodeForApiError", () => {

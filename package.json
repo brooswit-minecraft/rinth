@@ -1,6 +1,6 @@
 {
   "name": "@brooswit/rinth",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": false,
   "type": "module",
   "description": "A Modrinth CLI (servers management + publish) wrapping @modrinth/api-client.",
