@@ -23,7 +23,7 @@ import {
 import type { Archon, AuthConfig, Labrinth } from "@modrinth/api-client";
 import { requireToken } from "../auth.ts";
 import { CliError, exitCodeForApiError } from "../errors.ts";
-import type { PublicServer, Transport } from "./index.ts";
+import type { PowerAction, PublicServer, ServerDetail, Transport } from "./index.ts";
 
 /** Exported for unit testing offline — maps a caught API error to a CliError with no network I/O. */
 export function toCliError(error: unknown): CliError {
@@ -58,6 +58,27 @@ export function toPublicServer(server: Archon.Servers.v0.Server): PublicServer {
   };
 }
 
+/**
+ * Exported for unit testing offline — the field trim `servers get` uses.
+ * Built field by field from the raw `Server` (never spread) so a new
+ * credential field added to the API response in the future doesn't reach
+ * output just because it wasn't excluded.
+ */
+export function toServerDetail(server: Archon.Servers.v0.Server): ServerDetail {
+  return {
+    id: server.server_id,
+    name: server.name,
+    status: server.status,
+    game: server.game,
+    loader: server.loader,
+    loader_version: server.loader_version,
+    mc_version: server.mc_version,
+    net: server.net,
+    datacenter: server.datacenter,
+    upstream: server.upstream,
+  };
+}
+
 export function createRealTransport(): Transport {
   const token = requireToken();
   // AuthFeature's declared constructor type is inherited from
@@ -79,6 +100,31 @@ export function createRealTransport(): Transport {
       call(async () => {
         const response = await client.archon.servers_v0.list();
         return response.servers.map(toPublicServer);
+      }),
+
+    getServer: (serverId: string) =>
+      call(async () => toServerDetail(await client.archon.servers_v0.get(serverId))),
+
+    power: (serverId: string, action: PowerAction) => call(() => client.archon.servers_v0.power(serverId, action)),
+
+    setUpstream: (serverId: string, projectId: string, versionId: string) =>
+      call(() =>
+        client.archon.servers_v0.reinstall(serverId, { project_id: projectId, version_id: versionId }),
+      ),
+
+    // Labrinth's `GET /project/:idOrSlug` accepts a project id OR its slug
+    // interchangeably and returns the same `Project` shape either way, so
+    // there is no need to guess whether `projectIdOrSlug` is already an id
+    // before resolving it — always resolving is simpler and cannot
+    // misclassify an id-shaped slug (or vice versa). Same `.request()`
+    // escape hatch `getCurrentUser` uses for labrinth `/user`.
+    resolveProjectId: (projectIdOrSlug: string) =>
+      call(async () => {
+        const project = await client.request<Labrinth.Projects.v2.Project>(
+          `/project/${encodeURIComponent(projectIdOrSlug)}`,
+          { api: "labrinth", version: 2 },
+        );
+        return project.id;
       }),
   };
 }

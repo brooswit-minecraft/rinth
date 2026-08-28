@@ -30,11 +30,33 @@ export interface PublicServer {
   net: Archon.Servers.v0.Net;
 }
 
+/**
+ * The `servers get` shape: `PublicServer` plus the fields that command needs
+ * (current upstream, datacenter) but `servers list` does not. Same
+ * allowlist discipline as `PublicServer` — still excludes
+ * `sftp_username`/`sftp_password`/`node.token`.
+ */
+export interface ServerDetail extends PublicServer {
+  datacenter: string;
+  upstream: Archon.Servers.v0.Upstream | null;
+}
+
+/** The capitalized action union `servers_v0.power()` expects; the CLI accepts lowercase and maps. */
+export type PowerAction = "Start" | "Stop" | "Restart" | "Kill";
+
 export interface Transport {
   /** GET labrinth `/user` (v2) — the authenticated user. */
   getCurrentUser(): Promise<Labrinth.Users.v2.User>;
   /** List servers via the Archon `servers_v0` API for the authenticated user. */
   listServers(): Promise<PublicServer[]>;
+  /** GET a single server's details via `servers_v0.get()`. */
+  getServer(serverId: string): Promise<ServerDetail>;
+  /** POST a power action via `servers_v0.power()`. */
+  power(serverId: string, action: PowerAction): Promise<void>;
+  /** POST a modpack re-point via `servers_v0.reinstall()`. */
+  setUpstream(serverId: string, projectId: string, versionId: string): Promise<void>;
+  /** Resolve a project slug or id to its canonical id via labrinth `GET /project/:idOrSlug`. */
+  resolveProjectId(projectIdOrSlug: string): Promise<string>;
 }
 
 export { createRealTransport } from "./real.ts";

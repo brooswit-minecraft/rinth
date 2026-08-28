@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { ModrinthApiError } from "@modrinth/api-client";
 import type { Archon, Labrinth } from "@modrinth/api-client";
-import { createRealTransport, toCliError, toPublicServer } from "../../../src/client/real.ts";
+import { createRealTransport, toCliError, toPublicServer, toServerDetail } from "../../../src/client/real.ts";
 import { CliError, ExitCode } from "../../../src/errors.ts";
+import { printJson } from "../../../src/output.ts";
 
 /**
  * Stubs global fetch for the duration of one test — no real network egress.
@@ -98,6 +99,43 @@ describe("toPublicServer", () => {
   });
 });
 
+describe("toServerDetail", () => {
+  test("trims to only the fields safe to print, including datacenter/upstream", () => {
+    expect(toServerDetail(FULL_SERVER)).toEqual({
+      id: "srv_123",
+      name: "My Server",
+      status: "available",
+      game: "Minecraft",
+      loader: "Paper",
+      loader_version: "1.20.4-497",
+      mc_version: "1.20.4",
+      net: { ip: null, port: 25565, domain: "srv-123.modrinth.gg" },
+      datacenter: "us-east",
+      upstream: null,
+    });
+  });
+
+  test("never carries sftp/node credentials through the real print path (printJson)", () => {
+    // A full fake Server carrying literal credential values, sent through
+    // the actual trim function AND the actual printJson() call path (the
+    // only function in the CLI allowed to write to stdout) — proving there
+    // is no route from a raw Server to output that leaks these fields.
+    const serverWithCredentials: Archon.Servers.v0.Server = {
+      ...FULL_SERVER,
+      sftp_password: "hunter2",
+      node: { token: "secret", instance: "node-1" },
+    };
+
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    printJson(toServerDetail(serverWithCredentials));
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(printed).not.toContain("hunter2");
+    expect(printed).not.toContain("secret");
+  });
+});
+
 describe("createRealTransport", () => {
   const ORIGINAL = process.env["MODRINTH_TOKEN"];
 
@@ -188,6 +226,117 @@ describe("createRealTransport", () => {
 
       expect(caught).toBeInstanceOf(CliError);
       expect((caught as CliError).exitCode).toBe(ExitCode.ApiError);
+    });
+
+    test("getServer resolves with the trimmed server on a 200 response", async () => {
+      const fetchSpy = mockFetch(
+        () => new Response(JSON.stringify(FULL_SERVER), { status: 200, headers: { "content-type": "application/json" } }),
+      );
+
+      const transport = createRealTransport();
+      const server = await transport.getServer("srv_123");
+      fetchSpy.mockRestore();
+
+      expect(server).toEqual(toServerDetail(FULL_SERVER));
+    });
+
+    test("getServer rejects with a CliError mapped from a 404 response", async () => {
+      const fetchSpy = mockFetch(() => new Response(JSON.stringify({ error: "not found" }), { status: 404 }));
+
+      const transport = createRealTransport();
+      let caught: unknown;
+      try {
+        await transport.getServer("nope");
+      } catch (err) {
+        caught = err;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      expect((caught as CliError).exitCode).toBe(ExitCode.NotFound);
+    });
+
+    test("power resolves on a 200/204 response", async () => {
+      const fetchSpy = mockFetch(() => new Response(null, { status: 204 }));
+
+      const transport = createRealTransport();
+      await expect(transport.power("srv_123", "Restart")).resolves.toBeUndefined();
+      fetchSpy.mockRestore();
+    });
+
+    test("power rejects with a CliError mapped from a 426 response (missing X-Panel-Version)", async () => {
+      const fetchSpy = mockFetch(
+        () => new Response(JSON.stringify({ error: "unsupported archon request version" }), { status: 426 }),
+      );
+
+      const transport = createRealTransport();
+      let caught: unknown;
+      try {
+        await transport.power("srv_123", "Kill");
+      } catch (err) {
+        caught = err;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      expect((caught as CliError).exitCode).toBe(ExitCode.ApiError);
+      expect((caught as CliError).message).toContain("X-Panel-Version");
+    });
+
+    test("setUpstream resolves on a 200/204 response", async () => {
+      const fetchSpy = mockFetch(() => new Response(null, { status: 204 }));
+
+      const transport = createRealTransport();
+      await expect(transport.setUpstream("srv_123", "AABBCCDD", "version_1")).resolves.toBeUndefined();
+      fetchSpy.mockRestore();
+    });
+
+    test("setUpstream rejects with a CliError mapped from a 500 response", async () => {
+      const fetchSpy = mockFetch(() => new Response(JSON.stringify({ error: "internal" }), { status: 500 }));
+
+      const transport = createRealTransport();
+      let caught: unknown;
+      try {
+        await transport.setUpstream("srv_123", "AABBCCDD", "version_1");
+      } catch (err) {
+        caught = err;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      expect((caught as CliError).exitCode).toBe(ExitCode.ApiError);
+    });
+
+    test("resolveProjectId resolves the project id from a labrinth project lookup, by slug or id", async () => {
+      const PROJECT: Labrinth.Projects.v2.Project = {
+        id: "AABBCCDD",
+        slug: "fabulously-optimized",
+      } as Labrinth.Projects.v2.Project;
+      const fetchSpy = mockFetch(
+        () => new Response(JSON.stringify(PROJECT), { status: 200, headers: { "content-type": "application/json" } }),
+      );
+
+      const transport = createRealTransport();
+      const id = await transport.resolveProjectId("fabulously-optimized");
+      fetchSpy.mockRestore();
+
+      expect(id).toBe("AABBCCDD");
+    });
+
+    test("resolveProjectId rejects with a CliError mapped from a 404 response (unknown slug/id)", async () => {
+      const fetchSpy = mockFetch(() => new Response(JSON.stringify({ error: "not found" }), { status: 404 }));
+
+      const transport = createRealTransport();
+      let caught: unknown;
+      try {
+        await transport.resolveProjectId("does-not-exist");
+      } catch (err) {
+        caught = err;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      expect((caught as CliError).exitCode).toBe(ExitCode.NotFound);
     });
   });
 });
