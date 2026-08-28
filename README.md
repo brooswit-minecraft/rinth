@@ -4,9 +4,8 @@ A Modrinth CLI (servers management + publish) wrapping [`@modrinth/api-client`](
 One tested surface usable both by a human at a shell and by CI — there is no
 official Modrinth CLI.
 
-Status: scaffold only (KAN-725). Command logic, the real transport, and
-output formatting land in a follow-up ticket (T2); this repo currently ships
-compiling stubs and the CI gate stack.
+Status: client core + two real commands (KAN-726), on top of the scaffold
+and CI gate stack from KAN-725.
 
 ## Install / run
 
@@ -35,10 +34,62 @@ rinth servers list
 ## `--json`
 
 Every command accepts a global `--json` flag. When set, the command writes a
-single JSON value to stdout instead of human-readable text, so output is
-safe to pipe into `jq` or another program. Human-readable text (including
-prompts and progress) always goes to stdout when `--json` is not set;
-diagnostics go to stderr in both modes.
+single JSON value to stdout and **nothing else** — no banners, no progress,
+no human text — so output is safe to pipe into `jq` or another program.
+Human-readable text goes to stdout when `--json` is not set. Errors always go
+to stderr, in both modes.
+
+## Redaction
+
+Every write to stdout/stderr goes through a single redaction helper
+(`src/redact.ts`) before it is printed: the `MODRINTH_TOKEN` value (and any
+`Bearer <token>` header, even for a token the process never saw) is
+scrubbed and replaced with `***REDACTED***`. `src/output.ts`'s
+`printJson`/`printHuman`/`printError` are the only functions in the CLI that
+call `console.log`/`console.error`, so there is no path to the terminal
+that can bypass it — see `test/unit/redact.test.ts`, which constructs an
+error embedding the token, sends it through the real print path, and
+asserts the token value never appears in the captured output.
+
+`rinth servers list` additionally never includes SFTP credentials or the
+Archon node panel token in its output — see the JSON shape below.
+
+## Commands
+
+### `rinth whoami`
+
+`GET https://api.modrinth.com/v2/user` (Bearer token). Prints the
+authenticated user.
+
+**JSON shape** — the raw Modrinth user object:
+
+```json
+{ "id": "...", "username": "...", "name": "...", "email": "...", "role": "developer", "badges": 0, "created": "..." }
+```
+
+### `rinth servers list`
+
+Lists servers via `@modrinth/api-client`'s Archon `servers_v0.list()`.
+
+**JSON shape** — trimmed to fields safe to print; SFTP credentials and the
+node panel token from the Archon response are never included:
+
+```json
+{
+  "servers": [
+    {
+      "id": "...",
+      "name": "...",
+      "status": "available",
+      "game": "Minecraft",
+      "loader": "Paper",
+      "loader_version": "...",
+      "mc_version": "1.20.4",
+      "net": { "ip": null, "port": 25565, "domain": "..." }
+    }
+  ]
+}
+```
 
 ## Exit codes
 
@@ -51,6 +102,14 @@ diagnostics go to stderr in both modes.
 | 4    | Not found (404)                       |
 | 5    | API error, other 4xx/5xx              |
 | 6    | Network error                         |
+
+Note: the Archon (servers) API returns HTTP 426 ("unsupported archon
+request version") for any request missing an `X-Panel-Version: 1` header,
+*before* it evaluates auth — a missing header would otherwise look
+indistinguishable from a rejected token. `@modrinth/api-client` does not
+send this header by default (confirmed by reading its source); the real
+transport (`src/client/real.ts`) adds it explicitly via the client's
+`PanelVersionFeature`. A 426 maps to exit code 5 (API error), not 3.
 
 ## Tests
 

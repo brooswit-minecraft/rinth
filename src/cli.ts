@@ -1,9 +1,12 @@
 #!/usr/bin/env bun
-// T2 will flesh out dispatch (auth checks, output formatting, real exit-code
-// mapping via src/errors.ts) once src/commands has real commands to run.
+// Dispatch: parses argv, resolves a command, and maps whatever it throws to
+// an exit code. All output (including "unknown command") goes through
+// src/output.ts so it can never bypass redaction.
 
+import { createRealTransport, type Transport } from "./client/index.ts";
 import { commands } from "./commands/index.ts";
-import { ExitCode } from "./errors.ts";
+import { CliError, ExitCode } from "./errors.ts";
+import { printError, printHuman } from "./output.ts";
 
 export interface ParsedArgs {
   json: boolean;
@@ -31,24 +34,38 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return { json, help, command, rest };
 }
 
-export function run(argv: string[]): number {
+export interface RunDeps {
+  /** Injected for tests; defaults to the real network transport. */
+  transport?: Transport;
+}
+
+export async function run(argv: string[], deps: RunDeps = {}): Promise<number> {
   const parsed = parseArgs(argv);
 
   if (parsed.help || !parsed.command) {
-    console.log("rinth — a Modrinth CLI\n\nUsage: rinth [--json] <command> [args]");
+    printHuman("rinth — a Modrinth CLI\n\nUsage: rinth [--json] <command> [args]");
     return ExitCode.Ok;
   }
 
   const command = commands[parsed.command];
   if (!command) {
-    console.error(`Unknown command: ${parsed.command}`);
+    printError(`Unknown command: ${parsed.command}`);
     return ExitCode.Usage;
   }
 
-  // T2: await command.run(parsed.rest) and map thrown CliError -> exit code.
-  return ExitCode.Ok;
+  try {
+    const transport = deps.transport ?? createRealTransport();
+    return await command.run(parsed.rest, { json: parsed.json, transport });
+  } catch (err) {
+    if (err instanceof CliError) {
+      printError(err.message);
+      return err.exitCode;
+    }
+    printError(err instanceof Error ? err.message : String(err));
+    return ExitCode.Generic;
+  }
 }
 
 if (import.meta.main) {
-  process.exit(run(process.argv.slice(2)));
+  process.exit(await run(process.argv.slice(2)));
 }
