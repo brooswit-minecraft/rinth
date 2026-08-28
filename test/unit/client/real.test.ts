@@ -189,5 +189,56 @@ describe("createRealTransport", () => {
       expect(caught).toBeInstanceOf(CliError);
       expect((caught as CliError).exitCode).toBe(ExitCode.ApiError);
     });
+
+    test("listVersions resolves with the unmodified version array on a 200 response", async () => {
+      const versions: Labrinth.Versions.v2.Version[] = [
+        {
+          id: "v1",
+          project_id: "proj_1",
+          author_id: "author_1",
+          featured: false,
+          name: "Version 1",
+          version_number: "1.0.0",
+          changelog: "",
+          date_published: "2026-01-01T00:00:00Z",
+          downloads: 0,
+          version_type: "release",
+          status: "listed",
+          files: [],
+          dependencies: [],
+          game_versions: ["1.20.4"],
+          loaders: ["fabric"],
+        },
+      ];
+      const fetchSpy = mockFetch(
+        () =>
+          new Response(JSON.stringify(versions), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      );
+
+      const transport = createRealTransport();
+      const result = await transport.listVersions("sodium", { loaders: ["fabric"] });
+      fetchSpy.mockRestore();
+
+      expect(result).toEqual(versions);
+    });
+
+    test("listVersions rejects with a CliError mapped from a 404 response", async () => {
+      const fetchSpy = mockFetch(() => new Response(JSON.stringify({ error: "not found" }), { status: 404 }));
+
+      const transport = createRealTransport();
+      let caught: unknown;
+      try {
+        await transport.listVersions("does-not-exist");
+      } catch (err) {
+        caught = err;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      expect((caught as CliError).exitCode).toBe(ExitCode.NotFound);
+    });
   });
 });

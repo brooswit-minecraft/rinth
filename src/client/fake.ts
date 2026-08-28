@@ -6,13 +6,17 @@
 
 import { CliError, type ExitCode } from "../errors.ts";
 import type { Labrinth } from "@modrinth/api-client";
-import type { PublicServer, Transport } from "./index.ts";
+import type { PublicServer, Transport, VersionFilters } from "./index.ts";
 
 export interface FakeTransportFixtures {
   user?: Labrinth.Users.v2.User;
   userError?: CliError;
   servers?: PublicServer[];
   serversError?: CliError;
+  versions?: Labrinth.Versions.v2.Version[];
+  versionsError?: CliError;
+  /** Called synchronously with the exact args `listVersions` received, so tests can assert filter pass-through. */
+  onListVersions?: (project: string, filters: VersionFilters | undefined) => void;
 }
 
 export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Transport {
@@ -32,6 +36,14 @@ export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Trans
         throw fixtures.serversError;
       }
       return fixtures.servers ?? [];
+    },
+
+    async listVersions(project, filters) {
+      fixtures.onListVersions?.(project, filters);
+      if (fixtures.versionsError) {
+        throw fixtures.versionsError;
+      }
+      return fixtures.versions ?? [];
     },
   };
 }
