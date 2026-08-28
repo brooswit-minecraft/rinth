@@ -9,3 +9,16 @@ export const hasModrinthToken = Boolean(MODRINTH_TOKEN);
 if (!hasModrinthToken) {
   console.log("MODRINTH_TOKEN not set — skipping integration tests");
 }
+
+/**
+ * Names a real project (id or slug) the token is allowed to publish
+ * throwaway versions to — see test/integration/publish.integration.test.ts.
+ * Not set in this environment (or CI, by default): publishing creates a
+ * real version, so it needs an explicit opt-in project, not just a token.
+ */
+export const RINTH_TEST_PROJECT = process.env["RINTH_TEST_PROJECT"];
+export const hasTestProject = Boolean(RINTH_TEST_PROJECT);
+
+if (!hasTestProject) {
+  console.log("RINTH_TEST_PROJECT not set — skipping publish integration test");
+}

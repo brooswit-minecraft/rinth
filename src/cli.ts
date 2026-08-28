@@ -54,8 +54,21 @@ export async function run(argv: string[], deps: RunDeps = {}): Promise<number> {
   }
 
   try {
-    const transport = deps.transport ?? createRealTransport();
-    return await command.run(parsed.rest, { json: parsed.json, transport });
+    // Lazy: `createRealTransport()` calls `requireToken()`, which throws
+    // without MODRINTH_TOKEN. Every existing command reads `ctx.transport`
+    // as its first action, so this is no different from eager construction
+    // for them — but `rinth publish --dry-run` (KAN-731) must run without a
+    // token, and never touches `ctx.transport` at all, so deferring
+    // construction to first read is what makes that possible without
+    // changing `createRealTransport()`'s own unconditional-token behavior.
+    let resolvedTransport: Transport | undefined;
+    const ctx = {
+      json: parsed.json,
+      get transport(): Transport {
+        return (resolvedTransport ??= deps.transport ?? createRealTransport());
+      },
+    };
+    return await command.run(parsed.rest, ctx);
   } catch (err) {
     if (err instanceof CliError) {
       printError(err.message);
