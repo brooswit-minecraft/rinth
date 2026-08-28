@@ -256,6 +256,38 @@ describe("createRealTransport", () => {
       expect((caught as CliError).exitCode).toBe(ExitCode.NotFound);
     });
 
+    test("getWebSocketAuth resolves with the parsed auth on a 200 response", async () => {
+      const fetchSpy = mockFetch(
+        () =>
+          new Response(JSON.stringify({ url: "wss://example.test/console", token: "jwt-abc" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      );
+
+      const transport = createRealTransport();
+      const auth = await transport.getWebSocketAuth("srv_1");
+      fetchSpy.mockRestore();
+
+      expect(auth).toEqual({ url: "wss://example.test/console", token: "jwt-abc" });
+    });
+
+    test("getWebSocketAuth rejects with a CliError mapped from a 404 response", async () => {
+      const fetchSpy = mockFetch(() => new Response(JSON.stringify({ error: "not found" }), { status: 404 }));
+
+      const transport = createRealTransport();
+      let caught: unknown;
+      try {
+        await transport.getWebSocketAuth("srv_1");
+      } catch (err) {
+        caught = err;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      expect((caught as CliError).exitCode).toBe(ExitCode.NotFound);
+    });
+
     test("power resolves on a 200/204 response", async () => {
       const fetchSpy = mockFetch(() => new Response(null, { status: 204 }));
 
@@ -337,6 +369,118 @@ describe("createRealTransport", () => {
 
       expect(caught).toBeInstanceOf(CliError);
       expect((caught as CliError).exitCode).toBe(ExitCode.NotFound);
+    });
+  });
+
+  describe("openSocket", () => {
+    /** Minimal stand-in for the platform `WebSocket` — just enough to prove `wrapWebSocket`'s event wiring and `send()` framing. */
+    class StubWebSocket {
+      readonly url: string;
+      readonly listeners: Record<string, Array<(event?: unknown) => void>> = {};
+      readonly sent: string[] = [];
+      closeCalled = false;
+
+      constructor(url: string) {
+        this.url = url;
+      }
+
+      addEventListener(type: string, handler: (event?: unknown) => void): void {
+        (this.listeners[type] ??= []).push(handler);
+      }
+
+      send(data: string): void {
+        this.sent.push(data);
+      }
+
+      close(): void {
+        this.closeCalled = true;
+      }
+    }
+
+    function withStubWebSocket<T>(fn: (sockets: StubWebSocket[]) => T): T {
+      const sockets: StubWebSocket[] = [];
+      const OriginalWebSocket = globalThis.WebSocket;
+      class TrackedStubWebSocket extends StubWebSocket {
+        constructor(url: string) {
+          super(url);
+          sockets.push(this);
+        }
+      }
+      // @ts-expect-error -- test stub deliberately narrower than the lib.dom WebSocket type
+      globalThis.WebSocket = TrackedStubWebSocket;
+      try {
+        return fn(sockets);
+      } finally {
+        globalThis.WebSocket = OriginalWebSocket;
+      }
+    }
+
+    test("opens a WebSocket to the given URL, and send() JSON-frames outgoing messages", () => {
+      withStubWebSocket((sockets) => {
+        const transport = createRealTransport();
+        const socket = transport.openSocket("wss://example.test/console");
+        socket.send({ event: "auth", jwt: "jwt-abc" });
+
+        expect(sockets).toHaveLength(1);
+        expect(sockets[0]?.url).toBe("wss://example.test/console");
+        expect(sockets[0]?.sent).toEqual([JSON.stringify({ event: "auth", jwt: "jwt-abc" })]);
+      });
+    });
+
+    test("routes open/message/error/close listener events to the matching ConsoleSocket handler", () => {
+      withStubWebSocket((sockets) => {
+        const transport = createRealTransport();
+        const socket = transport.openSocket("wss://example.test/console");
+        const stub = sockets[0];
+        if (!stub) throw new Error("expected a stub WebSocket to have been constructed");
+
+        let opened = false;
+        socket.onOpen(() => {
+          opened = true;
+        });
+        let receivedEvent: unknown;
+        socket.onEvent((event) => {
+          receivedEvent = event;
+        });
+        let receivedError: unknown;
+        socket.onError((error) => {
+          receivedError = error;
+        });
+        let closed = false;
+        socket.onClose(() => {
+          closed = true;
+        });
+
+        stub.listeners["open"]?.[0]?.();
+        stub.listeners["message"]?.[0]?.({ data: JSON.stringify({ event: "auth-ok" }) });
+        const errorEvent = { message: "boom" };
+        stub.listeners["error"]?.[0]?.(errorEvent);
+        stub.listeners["close"]?.[0]?.();
+        socket.close();
+
+        expect(opened).toBe(true);
+        expect(receivedEvent).toEqual({ event: "auth-ok" });
+        expect(receivedError).toBe(errorEvent);
+        expect(closed).toBe(true);
+        expect(stub.closeCalled).toBe(true);
+      });
+    });
+
+    test("ignores a malformed message frame instead of throwing", () => {
+      withStubWebSocket((sockets) => {
+        const transport = createRealTransport();
+        const socket = transport.openSocket("wss://example.test/console");
+        const stub = sockets[0];
+        if (!stub) throw new Error("expected a stub WebSocket to have been constructed");
+
+        let calls = 0;
+        socket.onEvent(() => {
+          calls++;
+        });
+
+        expect(() => stub.listeners["message"]?.[0]?.({ data: "not json" })).not.toThrow();
+        expect(calls).toBe(0);
+      });
     });
   });
 });

@@ -1,10 +1,11 @@
 import type { PowerAction, ServerDetail } from "../client/index.ts";
 import { CliError, ExitCode } from "../errors.ts";
 import { printHuman, printJson } from "../output.ts";
+import { registerSecret } from "../redact.ts";
 import type { Command, CommandContext } from "./types.ts";
 
 const TOP_USAGE =
-  "Usage: rinth servers list | get <id> | power <id> start|stop|restart|kill | upstream <id> --project <slug|id> --version <version_id> [--restart]";
+  "Usage: rinth servers list | get <id> | power <id> start|stop|restart|kill | upstream <id> --project <slug|id> --version <version_id> [--restart] | exec <id> [--wait <ms>] <command...>";
 
 async function list(ctx: CommandContext): Promise<number> {
   const servers = await ctx.transport.listServers();
@@ -163,6 +164,140 @@ async function upstream(args: string[], ctx: CommandContext): Promise<number> {
   return ExitCode.Ok;
 }
 
+const EXEC_USAGE = "Usage: rinth servers exec <id> [--wait <ms>] <command...>";
+
+/** How long to wait for `auth-ok`/`auth-incorrect` after the socket opens before treating it as an auth failure. */
+const AUTH_TIMEOUT_MS = 5000;
+
+interface ParsedExecArgs {
+  id: string | undefined;
+  wait: number;
+  command: string[];
+}
+
+/** Returns `null` for a bad/missing `--wait` value — the caller turns that into a usage error. */
+function parseExecArgs(args: string[]): ParsedExecArgs | null {
+  const rest = [...args];
+  let wait = 2000;
+
+  const waitIndex = rest.indexOf("--wait");
+  if (waitIndex !== -1) {
+    const raw = rest[waitIndex + 1];
+    const value = raw === undefined ? NaN : Number(raw);
+    if (!Number.isFinite(value) || value < 0) {
+      return null;
+    }
+    wait = value;
+    rest.splice(waitIndex, 2);
+  }
+
+  const [id, ...command] = rest;
+  return { id, wait, command };
+}
+
+async function exec(args: string[], ctx: CommandContext): Promise<number> {
+  const parsed = parseExecArgs(args);
+  if (!parsed || !parsed.id || parsed.command.length === 0) {
+    throw new CliError(EXEC_USAGE, ExitCode.Usage);
+  }
+  const { id, wait, command } = parsed;
+  const commandStr = command.join(" ");
+
+  const auth = await ctx.transport.getWebSocketAuth(id);
+  // Register before anything else can happen on this socket, so a crash or
+  // stray log line can never leak the credential.
+  registerSecret(auth.token);
+
+  const socket = ctx.transport.openSocket(auth.url);
+  const lines: string[] = [];
+
+  return await new Promise<number>((resolve, reject) => {
+    let settled = false;
+    // Once the command has been sent, a socket close is the console hanging
+    // up normally (e.g. after an idle command) — not a failure — so it
+    // should report whatever output was collected instead of erroring.
+    let commandSent = false;
+    let authTimer: ReturnType<typeof setTimeout> | undefined;
+    let waitTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // Overall safety net: whatever the socket does or doesn't do, the CLI
+    // must exit — this bounds the auth handshake and the collection window
+    // plus a margin, so a wedged socket can never hang the process forever.
+    const hardCeiling = setTimeout(
+      () => fail(new CliError("rinth servers exec: timed out waiting on the console socket", ExitCode.Network)),
+      wait + AUTH_TIMEOUT_MS + 5000,
+    );
+
+    function cleanup(): void {
+      clearTimeout(authTimer);
+      clearTimeout(waitTimer);
+      clearTimeout(hardCeiling);
+    }
+
+    function succeed(): void {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket.close();
+      resolve(ExitCode.Ok);
+    }
+
+    function fail(error: CliError): void {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket.close();
+      reject(error);
+    }
+
+    // Shared by the --wait timer and a post-command close, so whichever
+    // happens first reports the same result: the collected lines, exit 0.
+    function finishCollected(): void {
+      if (settled) return;
+      if (ctx.json) {
+        printJson({ id, command: commandStr, lines });
+      }
+      succeed();
+    }
+
+    socket.onError((error) =>
+      fail(new CliError(`rinth servers exec: console connection failed: ${String(error)}`, ExitCode.Network)),
+    );
+    socket.onClose(() => {
+      if (commandSent) {
+        finishCollected();
+      } else {
+        fail(new CliError("rinth servers exec: console connection closed unexpectedly", ExitCode.Network));
+      }
+    });
+
+    socket.onOpen(() => {
+      socket.send({ event: "auth", jwt: auth.token });
+      authTimer = setTimeout(
+        () => fail(new CliError("rinth servers exec: authentication timed out", ExitCode.AuthMissing)),
+        AUTH_TIMEOUT_MS,
+      );
+    });
+
+    socket.onEvent((event) => {
+      if (event.event === "auth-ok") {
+        clearTimeout(authTimer);
+        socket.send({ event: "command", cmd: commandStr });
+        commandSent = true;
+        waitTimer = setTimeout(finishCollected, wait);
+      } else if (event.event === "auth-incorrect") {
+        fail(new CliError("rinth servers exec: authentication rejected", ExitCode.AuthMissing));
+      } else if (event.event === "log" || event.event === "log4j") {
+        const line = event.message ?? "";
+        lines.push(line);
+        if (!ctx.json) {
+          printHuman(line);
+        }
+      }
+    });
+  });
+}
+
 export const serversCommand: Command = {
   name: "servers",
   describe: "Manage Modrinth-hosted servers",
@@ -181,6 +316,9 @@ export const serversCommand: Command = {
     }
     if (sub === "upstream") {
       return upstream(rest, ctx);
+    }
+    if (sub === "exec") {
+      return exec(rest, ctx);
     }
 
     throw new CliError(TOP_USAGE, ExitCode.Usage);
