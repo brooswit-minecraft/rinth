@@ -6,13 +6,20 @@
 
 import { CliError, type ExitCode } from "../errors.ts";
 import type { Labrinth } from "@modrinth/api-client";
-import type { PublicServer, Transport } from "./index.ts";
+import type { PowerAction, PublicServer, ServerDetail, Transport } from "./index.ts";
 
 export interface FakeTransportFixtures {
   user?: Labrinth.Users.v2.User;
   userError?: CliError;
   servers?: PublicServer[];
   serversError?: CliError;
+  server?: ServerDetail;
+  serverError?: CliError;
+  powerError?: CliError;
+  setUpstreamError?: CliError;
+  /** The id `resolveProjectId` returns; defaults to echoing the input unresolved. */
+  resolveProjectId?: string;
+  resolveProjectIdError?: CliError;
 }
 
 export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Transport {
@@ -32,6 +39,35 @@ export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Trans
         throw fixtures.serversError;
       }
       return fixtures.servers ?? [];
+    },
+
+    async getServer(_serverId: string) {
+      if (fixtures.serverError) {
+        throw fixtures.serverError;
+      }
+      if (!fixtures.server) {
+        throw new Error("createFakeTransport: no `server` fixture provided");
+      }
+      return fixtures.server;
+    },
+
+    async power(_serverId: string, _action: PowerAction) {
+      if (fixtures.powerError) {
+        throw fixtures.powerError;
+      }
+    },
+
+    async setUpstream(_serverId: string, _projectId: string, _versionId: string) {
+      if (fixtures.setUpstreamError) {
+        throw fixtures.setUpstreamError;
+      }
+    },
+
+    async resolveProjectId(projectIdOrSlug: string) {
+      if (fixtures.resolveProjectIdError) {
+        throw fixtures.resolveProjectIdError;
+      }
+      return fixtures.resolveProjectId ?? projectIdOrSlug;
     },
   };
 }
