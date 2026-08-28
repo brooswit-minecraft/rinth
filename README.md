@@ -91,6 +91,109 @@ node panel token from the Archon response are never included:
 }
 ```
 
+### `rinth versions list`
+
+`GET https://api.modrinth.com/v2/project/{idOrSlug}/version` (no auth
+required by the API itself, but every rinth command goes through the same
+token-requiring real transport). `--loader`/`--game-version` are
+repeatable and sent as server-side filters; `--channel` (release/beta/alpha)
+is **not** a server-side filter on this endpoint, so it is applied
+client-side against the returned `version_type` field. `--limit` is
+forwarded to the API client's request and **is honored server-side**
+(confirmed empirically — undocumented on the live docs, but real), though
+the live labrinth docs do not document a `limit`/`offset` param on this
+endpoint at all — see "Notes on live-API behavior" below.
+
+**Caveat: `--limit` is applied before `--channel`.** Because `--limit` is a
+server-side page size and `--channel` is a client-side filter applied to
+whatever that page contains, combining them can return fewer rows than
+you'd expect — or none — even when matching versions exist further down
+the project's full version history. For example, `--limit 5 --channel
+release` on a project whose 5 most recent versions are all beta/alpha
+returns zero rows, even if the project has plenty of release versions
+overall. If you need a channel-filtered result, prefer omitting `--limit`
+(or set it generously) rather than assuming the two compose like two
+independent filters.
+
+```sh
+rinth versions list sodium --loader fabric --game-version 1.20.4 --channel release
+```
+
+**Human output** — an aligned table:
+
+```
+id        version_number  channel  loaders  game versions  date                       primary file
+4GyXKCLd  mc1.20.4-0.5.8  release  fabric   1.20.4         2024-02-01T20:33:48.832862Z sodium-fabric-0.5.8+mc1.20.4.jar
+```
+
+**`--json`** — the array of version objects, **unmodified API shape** (an
+array at the top level, not wrapped in an object):
+
+```json
+[
+  {
+    "id": "4GyXKCLd",
+    "project_id": "AANobbMI",
+    "version_number": "mc1.20.4-0.5.8",
+    "version_type": "release",
+    "date_published": "2024-02-01T20:33:48.832862Z",
+    "game_versions": ["1.20.4"],
+    "loaders": ["fabric"],
+    "files": [{ "filename": "sodium-fabric-0.5.8+mc1.20.4.jar", "primary": true, "...": "..." }],
+    "...": "..."
+  }
+]
+```
+
+An empty result is not an error: it prints `No versions match.` (or `[]`
+in `--json` mode) and exits 0.
+
+### `rinth versions latest`
+
+Same filters as `versions list` **except `--limit`, which is not
+supported here** (rejected with a usage error, exit 2) — resolves to a
+single version: the newest match by `date_published` (compared as parsed
+dates, not response order — see "Notes on live-API behavior" below).
+`--limit` is deliberately excluded because it's applied server-side while
+`--channel` is applied client-side (see the caveat under `versions list`
+above): limiting the candidate set before filtering by channel could
+silently return a stale version, or no match at all, instead of the
+project's actual newest matching version. Since `versions latest` is what
+picks the version id handed to a deploy, that failure mode would be
+dangerous to allow silently.
+
+```sh
+rinth versions latest sodium --loader fabric --game-version 1.20.4
+```
+
+**Human output:**
+
+```
+4GyXKCLd  mc1.20.4-0.5.8
+```
+
+**`--json`** — a single version object (not an array), same shape as one
+element of `versions list`'s array.
+
+No match exits 4 (`ExitCode.NotFound`) with a clear message.
+
+**Notes on live-API behavior** (verified against
+[docs.modrinth.com](https://docs.modrinth.com) and a real request against
+the `sodium` project):
+
+- The endpoint's documented filters are `loaders`, `game_versions`, and
+  `featured`; there is no `version_type`/channel filter, so `--channel` is
+  applied client-side. `@modrinth/api-client`'s
+  `versions_v2.getProjectVersions()` also accepts `limit`/`offset` in its
+  TypeScript types and sends them as query params, but the live docs do
+  not document either as supported on this endpoint — this contradicts
+  the task's assumption that `--limit` is a plain server-side filter, so
+  treat it as best-effort until confirmed otherwise.
+- The live response for `sodium` came back already sorted descending by
+  `date_published`, but this is not documented behavior, so `versions
+  latest` does not rely on response order — it parses and compares
+  `date_published` explicitly.
+
 ## Exit codes
 
 | Code | Meaning                              |

@@ -23,7 +23,7 @@ import {
 import type { Archon, AuthConfig, Labrinth } from "@modrinth/api-client";
 import { requireToken } from "../auth.ts";
 import { CliError, exitCodeForApiError } from "../errors.ts";
-import type { PublicServer, Transport } from "./index.ts";
+import type { PublicServer, Transport, VersionFilters } from "./index.ts";
 
 /** Exported for unit testing offline — maps a caught API error to a CliError with no network I/O. */
 export function toCliError(error: unknown): CliError {
@@ -80,5 +80,8 @@ export function createRealTransport(): Transport {
         const response = await client.archon.servers_v0.list();
         return response.servers.map(toPublicServer);
       }),
+
+    listVersions: (project: string, filters?: VersionFilters) =>
+      call(() => client.labrinth.versions_v2.getProjectVersions(project, filters)),
   };
 }

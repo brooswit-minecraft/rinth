@@ -30,11 +30,26 @@ export interface PublicServer {
   net: Archon.Servers.v0.Net;
 }
 
+/**
+ * Filters for `listVersions`, forwarded to labrinth's
+ * `GET /project/{id|slug}/version` (v2). `channel` (release/beta/alpha) is
+ * NOT a server-side filter on this endpoint — verified against
+ * https://docs.modrinth.com — so it is applied client-side by the command,
+ * not sent as a request param.
+ */
+export interface VersionFilters {
+  loaders?: string[];
+  game_versions?: string[];
+  limit?: number;
+}
+
 export interface Transport {
   /** GET labrinth `/user` (v2) — the authenticated user. */
   getCurrentUser(): Promise<Labrinth.Users.v2.User>;
   /** List servers via the Archon `servers_v0` API for the authenticated user. */
   listServers(): Promise<PublicServer[]>;
+  /** GET labrinth `/project/{idOrSlug}/version` (v2) — a project's versions, unmodified API shape. */
+  listVersions(project: string, filters?: VersionFilters): Promise<Labrinth.Versions.v2.Version[]>;
 }
 
 export { createRealTransport } from "./real.ts";
