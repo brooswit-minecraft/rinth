@@ -4,15 +4,39 @@ A Modrinth CLI (servers management + publish) wrapping [`@modrinth/api-client`](
 One tested surface usable both by a human at a shell and by CI — there is no
 official Modrinth CLI.
 
-Status: client core + `whoami`/`servers list` (KAN-726), plus
-`servers get|power|upstream` (KAN-728) and `servers exec` (KAN-730), on top
-of the scaffold and CI gate stack from KAN-725.
+Status: v0.5.0. Full command surface: `whoami`; `servers
+list|get|power|upstream|exec`; `versions list|latest`; `publish`. See
+"Known gaps / follow-ups" below for what still doesn't work against the
+live API.
 
 ## Install / run
 
+Pin to a released tag — **not** a branch — so a consumer's install can't
+silently change under them:
+
 ```sh
-bunx github:brooswit-minecraft/rinth
+bunx --bun github:brooswit-minecraft/rinth#v0.5.0 --help
 ```
+
+The `--bun` flag is required: it tells `bunx` to run the package's `bin`
+entry (`src/cli.ts`) directly under `bun`, not as a Node package. There is
+no build step and no committed `dist` — `rinth` runs straight from
+TypeScript source under bun.
+
+**GitHub Actions**:
+
+```yaml
+- uses: oven-sh/setup-bun@v2
+  with:
+    bun-version: latest
+- run: bunx --bun github:brooswit-minecraft/rinth#v0.5.0 versions latest sodium --loader fabric --json
+  env:
+    MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+```
+
+Publishing `@brooswit/rinth` to npm is **deferred** (it needs the
+maintainer's passkey) — the pinned `bunx --bun github:...#<tag>` install
+above is the only supported way to consume `rinth` for now.
 
 For local development:
 
@@ -31,6 +55,32 @@ history, process listings, or CI logs by accident.
 export MODRINTH_TOKEN=...
 rinth servers list
 ```
+
+### Authentication — what a token can and cannot do
+
+Verified against the `modrinth/code` frontend/backend @ `0ab9100` and
+`@modrinth/api-client` 0.60.0 (source: KAN-714 comments 14588/14622):
+
+- A labrinth PAT (`mrp_...`) **works** for every labrinth route this CLI
+  calls — `whoami`, `versions list/latest`, `publish` (given the relevant
+  PAT scopes) — and for the Archon **`servers list`** route.
+- A PAT **does not work** for per-server Archon routes (`servers
+  get`/`power`/`exec`): they return HTTP 403. This is an identity wall,
+  not a missing scope — labrinth's PAT scope enum has no
+  servers/archon/hosting scope at all (verified in `models/v3/pats.rs`:
+  `SHARED_INSTANCE` scopes exist; no `SERVER`/`ARCHON`/`PYRO` scope
+  matches anything). The web panel authenticates to Archon with the
+  user's browser *session* token (`mra_...`) instead, which is not a
+  CI-appropriate credential, and there is no endpoint that exchanges a
+  PAT for one.
+- The v0 `POST /servers/{id}/reinstall` route that `servers upstream`
+  targets is dead at the router: a deliberately invalid token gets 401 on
+  `GET /servers` but 404 on `reinstall`, proving the 404 is
+  route-not-found, independent of credentials (KAN-735, run
+  33203716833).
+- Archon requires an `X-Panel-Version: 1` header on every request; a
+  request missing it gets HTTP 426 *before* auth is even evaluated — see
+  "Exit codes" below.
 
 ## `--json`
 
@@ -70,6 +120,14 @@ authenticated user.
 
 ```json
 { "id": "...", "username": "...", "name": "...", "email": "...", "role": "developer", "badges": 0, "created": "..." }
+```
+
+**Caution:** the raw object includes your account's `email`. Do not print
+`whoami --json` unfiltered into a shared CI log — pipe it through `jq
+'{id, username}'` if you only need identity:
+
+```sh
+rinth whoami --json | jq '{id, username}'
 ```
 
 ### `rinth servers list`
@@ -444,6 +502,41 @@ you're willing to publish throwaway versions to) on top of the usual
 version numbered `0.0.0-rinth-test-<timestamp>` and deletes it afterwards
 via `versions_v2.deleteVersion(id)` — do not point `RINTH_TEST_PROJECT` at
 a project whose version history you care about.
+
+## CI recipe
+
+The deploy sequence a consumer runs in CI — resolve the newest matching
+version, then re-point a server at it:
+
+```sh
+version_id=$(rinth versions latest "$PROJECT" --loader "$LOADER" --json | jq -r '.id')
+rinth servers upstream "$SERVER_ID" --project "$PROJECT" --version "$version_id" --restart
+```
+
+**⚠️ The second step does not work against the live API today.** The v0
+`reinstall` route `servers upstream` calls is dead at the router — see
+"Authentication — what a token can and cannot do" above and "Known gaps /
+follow-ups" below. This recipe documents the intended shape of the deploy
+pipeline once `upstream` is migrated to the v1 content API; don't wire it
+into a real pipeline yet.
+
+## Known gaps / follow-ups
+
+- **`servers upstream` is non-functional against the live API** — the v0
+  `reinstall` route it calls is dead at the router (404 regardless of
+  credentials, server, or project); it needs migration to the v1 content
+  API (`POST /v1/servers/{id}/worlds/{world}/content`).
+- **`servers get`/`power`/`exec` require a credential Archon accepts for
+  that specific server** — a PAT is refused with 403 today; only a
+  browser session token works, and there's no way to obtain one in CI.
+- **The `publish` success path has never been exercised against the live
+  API** — `test/integration/publish.integration.test.ts` is gated on
+  `RINTH_TEST_PROJECT`, which is deliberately left unset.
+- **Public reads still require `MODRINTH_TOKEN`** — there is no tokenless
+  mode, even for routes the Modrinth API itself doesn't require auth for.
+- **npm publish under `@brooswit` is deferred** — it needs the
+  maintainer's passkey. The pinned `bunx --bun github:...#<tag>` install
+  is the supported path until then.
 
 ## Exit codes
 
