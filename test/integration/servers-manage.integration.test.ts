@@ -133,12 +133,11 @@ describe("integration: servers power / upstream (DESTRUCTIVE — gated on RINTH_
 
         // There is no "clear upstream" primitive in this CLI (matching the
         // Archon `reinstall` endpoint it wraps), so re-pointing a server
-        // that currently has NO modpack upstream would leave it with no way
-        // back if this test were interrupted. Only round-trip (re-apply the
-        // SAME project/version) when one is already configured — that still
-        // exercises the real `upstream` command end to end while remaining
-        // fully restorable by construction. Requires `before` (see above);
-        // skip cleanly (do not guess a project/version) when it's missing.
+        // that currently has NO modpack upstream would ordinarily leave it
+        // with no way back if this test were interrupted. Only round-trip
+        // (re-apply the SAME project/version) when one is already
+        // configured — that still exercises the real `upstream` command end
+        // to end while remaining fully restorable by construction.
         if (before && before.upstream && before.upstream.kind === "modpack") {
           const upstreamOut = captureOutput();
           const upstreamCode = await run([
@@ -161,10 +160,49 @@ describe("integration: servers power / upstream (DESTRUCTIVE — gated on RINTH_
             upstreamCode,
           );
         } else {
+          // KAN-735 item 1(c): `upstream`/`reinstall` was the one per-server
+          // endpoint never directly exercised (get/power/ws all 403, but a
+          // round-trip needs a known existing modpack to restore, which a
+          // blocked `get` can't supply). The epic explicitly authorized ONE
+          // forced attempt here (KAN-735 comments 14565/14568/14570) against
+          // a REAL, well-known public modpack — not a fake id, so that IF it
+          // unexpectedly succeeds the server ends up in a valid installed
+          // state rather than a broken one — specifically because this
+          // server is confirmed fresh/empty (the `servers list` payload
+          // shows loader/loader_version/mc_version all null), which is
+          // exactly the condition the human's ground rules authorize
+          // upstream experiments under. This branch only runs when there is
+          // no existing modpack to safely round-trip instead (the `if`
+          // above), so it never overwrites a real, already-configured pack.
+          const FORCED_PROBE_PROJECT = "t1tOiUHZ"; // "Create+" — real, public, ~426k downloads; same project schematic (KAN-717) already used.
+          const FORCED_PROBE_VERSION = "BSg2ZS8u"; // "Create+ 6.0.0 Alpha f" — a real version of that project.
           console.log(
-            before
-              ? `SERVERS UPSTREAM: ${id} has no modpack upstream configured (${JSON.stringify(before.upstream)}) — skipping the round-trip so this run never sets one it can't clear back`
-              : `SERVERS UPSTREAM: could not read ${id}'s starting upstream — skipping the round-trip (nothing safe to restore to)`,
+            `SERVERS UPSTREAM: ${id} has no known existing modpack to round-trip (${before ? JSON.stringify(before.upstream) : "get was blocked"}) — attempting the ONE epic-authorized forced probe against a real public modpack instead`,
+          );
+          const upstreamOut = captureOutput();
+          const upstreamCode = await run([
+            "--json",
+            "servers",
+            "upstream",
+            id,
+            "--project",
+            FORCED_PROBE_PROJECT,
+            "--version",
+            FORCED_PROBE_VERSION,
+          ]);
+          const upstreamLog = upstreamOut.lastLog();
+          const upstreamErr = upstreamOut.lastErr();
+          upstreamOut.restore();
+          console.log(
+            `SERVERS UPSTREAM: forced reinstall probe => exit ${upstreamCode}: ${detailFor(upstreamCode, upstreamLog, upstreamErr)}`,
+          );
+          if (upstreamCode === ExitCode.Ok) {
+            console.log(
+              `SERVERS UPSTREAM: *** LOUD NOTICE *** the forced reinstall probe SUCCEEDED on ${id} — reinstall is reachable while get/power/ws are not. This changes the answer for KAN-717/schematic. Report immediately on KAN-735/KAN-720/KAN-714.`,
+            );
+          }
+          expect([ExitCode.Ok, ExitCode.AuthMissing, ExitCode.NotFound, ExitCode.ApiError] as number[]).toContain(
+            upstreamCode,
           );
         }
       } finally {
