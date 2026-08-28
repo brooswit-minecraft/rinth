@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/). CI
 enforces that this file has a `## [<version>]` heading matching the
 `version` field in `package.json` — see README.md.
 
+## [0.5.0] - 2026-08-28
+
+### Added
+
+- `install-proof` CI job (`.github/workflows/ci.yml`): on a fresh
+  ubuntu-latest runner, without checking out the repo's working tree,
+  proves the exact consumer install path — `bunx --bun
+  github:brooswit-minecraft/rinth#<ref> --help`, `versions latest sodium
+  --loader fabric`, and `whoami --json` (logging only `{id, username}`,
+  never the raw object). Resolves the PR head sha on `pull_request`
+  events since `github.sha` there is an unfetchable merge commit; the
+  token-gated steps skip cleanly when `MODRINTH_TOKEN` isn't set, mirroring
+  the existing `integration` job.
+
+### Changed
+
+- README: corrected the stale Status line to the actual v0.4.0/v0.5.0
+  command surface; replaced the Install section with the pinned `bunx
+  --bun github:...#v0.5.0` path plus a GitHub Actions snippet and an
+  npm-publish-deferred note; added an "Authentication — what a token can
+  and cannot do" summary, a `whoami --json` email-redaction caution, a
+  "CI recipe" section (with an inline warning that `servers upstream`
+  doesn't work live yet), and a "Known gaps / follow-ups" section.
+
 ## [0.4.0] - 2026-08-28
 
 ### Added

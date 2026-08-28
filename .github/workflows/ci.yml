@@ -79,3 +79,51 @@ jobs:
         env:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
           RINTH_TEST_SERVER_ID: ${{ inputs.server_id }}
+
+  # Proves the exact install path a consumer will use, on a fresh runner,
+  # WITHOUT checking out this repo's working tree — the point is to install
+  # from the git ref itself, not from local files. On a pull_request event
+  # github.sha is an unfetchable merge commit, so this resolves the actual
+  # PR head commit instead; that commit is reachable because it's already
+  # pushed as the tip of a real branch.
+  install-proof:
+    name: install-proof
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve ref under test
+        id: ref
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: bunx --bun github:...#<ref> --help
+        run: bunx --bun "github:brooswit-minecraft/rinth#${{ steps.ref.outputs.sha }}" --help
+
+      - name: bunx --bun github:...#<ref> versions latest sodium --loader fabric
+        run: |
+          if [ -z "$MODRINTH_TOKEN" ]; then
+            echo "MODRINTH_TOKEN not set — skipping (this call still requires a token today, see README known gaps)"
+            exit 0
+          fi
+          bunx --bun "github:brooswit-minecraft/rinth#${{ steps.ref.outputs.sha }}" versions latest sodium --loader fabric
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+
+      - name: bunx --bun github:...#<ref> whoami --json (id/username only, never the raw object)
+        run: |
+          if [ -z "$MODRINTH_TOKEN" ]; then
+            echo "MODRINTH_TOKEN not set — skipping"
+            exit 0
+          fi
+          bunx --bun "github:brooswit-minecraft/rinth#${{ steps.ref.outputs.sha }}" whoami --json > /tmp/whoami.json
+          jq -c '{id, username}' /tmp/whoami.json
+          rm -f /tmp/whoami.json
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
