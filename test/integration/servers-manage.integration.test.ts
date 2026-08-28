@@ -49,35 +49,78 @@ function detailFor(code: number, log: string, err: string): string {
   return code === ExitCode.Ok ? log : err;
 }
 
+function statusOf(error: unknown): number | undefined {
+  return error && typeof error === "object" && "statusCode" in error ? (error as { statusCode?: number }).statusCode : undefined;
+}
+
+function messageOf(error: unknown): string {
+  return String((error as { message?: unknown })?.message ?? error);
+}
+
 /**
- * KAN-735 item 1(c) final discriminator (epic comments 14607/14608): does
- * POST /modrinth/v0/servers/<id>/reinstall 404 even before auth runs (a
- * router-level "no such route", hypothesis A) or only after a real token
- * is checked (route exists, auth gate first)? A literal garbage string
- * that was never a real credential — never the real MODRINTH_TOKEN, never
- * registered for redaction — makes this zero-risk regardless of outcome:
- * an invalid token can't authenticate to mutate anything. Bypasses the
- * `Transport`/command layer (same pattern as the other raw diagnostics in
- * this suite) since `createRealTransport()` only ever reads the real
- * `MODRINTH_TOKEN` env var.
+ * KAN-735 item 1(c) final discriminator (epic comments 14607/14608, tightened
+ * by 14612/14613): does POST /modrinth/v0/servers/<id>/reinstall 404 even
+ * before auth runs (a router-level "no such route", hypothesis A) or only
+ * after a real token is checked (route exists, auth gate first)?
+ *
+ * A garbage-token reinstall call alone proves nothing without a POSITIVE
+ * CONTROL on the *same client instance*: without one there is no evidence
+ * the invalid token was actually applied on this run rather than, say, a
+ * stale/rebuilt feature silently falling back to some other credential —
+ * exactly the kind of silent no-op that already slipped through once on
+ * this story (the get-precondition that skipped the power call). So this
+ * also calls `servers_v0.list()` — proven to return 200 with a REAL token
+ * in every run so far — through the *identical* diagnostic client. If the
+ * control also 404s here, the token plumbing is unverified and A-vs-C must
+ * be recorded as unresolved, not assumed.
+ *
+ * A literal garbage string that was never a real credential — never the
+ * real MODRINTH_TOKEN, never registered for redaction — makes both calls
+ * zero-risk regardless of outcome. Bypasses the `Transport`/command layer
+ * (same pattern as the other raw diagnostics in this suite) since
+ * `createRealTransport()` only ever reads the real `MODRINTH_TOKEN` env var.
  */
 async function probeReinstallWithInvalidToken(serverId: string, projectId: string, versionId: string): Promise<void> {
+  const authConfig: AuthConfig = { token: "kan735-diagnostic-not-a-real-token" };
+  const diagnosticClient = new GenericModrinthClient({
+    userAgent: "rinth-cli-diagnostic-KAN-735 (+https://github.com/brooswit-minecraft/rinth)",
+    features: [new AuthFeature(authConfig), new PanelVersionFeature()],
+  });
+
+  let controlStatus: number | "2xx" | undefined;
   try {
-    const authConfig: AuthConfig = { token: "kan735-diagnostic-not-a-real-token" };
-    const diagnosticClient = new GenericModrinthClient({
-      userAgent: "rinth-cli-diagnostic-KAN-735 (+https://github.com/brooswit-minecraft/rinth)",
-      features: [new AuthFeature(authConfig), new PanelVersionFeature()],
-    });
+    await diagnosticClient.archon.servers_v0.list();
+    controlStatus = "2xx";
+  } catch (error) {
+    controlStatus = statusOf(error);
+    printHuman(
+      `SERVERS LIST: same invalid-token client, positive control => status ${controlStatus ?? "unknown"}: ${messageOf(error)}`,
+    );
+  }
+  if (controlStatus === "2xx") {
+    printHuman(
+      `SERVERS LIST: same invalid-token client, positive control => unexpected 2xx — the invalid token was NOT applied on this run; treat the reinstall result below as inconclusive, not confirmatory, and record A-vs-C as unresolved.`,
+    );
+  }
+
+  let reinstallStatus: number | "2xx" | undefined;
+  try {
     await diagnosticClient.archon.servers_v0.reinstall(serverId, { project_id: projectId, version_id: versionId });
+    reinstallStatus = "2xx";
     printHuman(
       `SERVERS UPSTREAM: reinstall with an INVALID token unexpectedly resolved without throwing — treat as a 2xx and report loudly on KAN-735.`,
     );
   } catch (error) {
-    const status = error && typeof error === "object" && "statusCode" in error ? (error as { statusCode?: number }).statusCode : undefined;
+    reinstallStatus = statusOf(error);
     printHuman(
-      `SERVERS UPSTREAM: reinstall with an INVALID token (auth-vs-router control) => status ${status ?? "unknown"}: ${String((error as { message?: unknown })?.message ?? error)}`,
+      `SERVERS UPSTREAM: reinstall with an INVALID token (auth-vs-router control) => status ${reinstallStatus ?? "unknown"}: ${messageOf(error)}`,
     );
   }
+
+  const controlProvesAuthRan = controlStatus === 401 || controlStatus === 403;
+  printHuman(
+    `SERVERS UPSTREAM: invalid-token probe verdict => positive control ${controlProvesAuthRan ? "confirms" : "does NOT confirm"} the invalid token reached auth (list => ${controlStatus}); reinstall => ${reinstallStatus}. ${controlProvesAuthRan ? "A-vs-C is decidable from this run." : "A-vs-C must be recorded as unresolved."}`,
+  );
 }
 
 describe("integration: servers get", () => {
