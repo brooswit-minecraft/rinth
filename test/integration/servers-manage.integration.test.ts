@@ -105,10 +105,20 @@ describe("integration: servers power / upstream (DESTRUCTIVE — gated on RINTH_
 
       const { code: beforeCode, server: before } = await getServer();
       if (beforeCode !== ExitCode.Ok || !before) {
-        console.log(`SERVERS POWER/UPSTREAM: could not read ${id} before testing (exit ${beforeCode}) — skipping`);
-        return;
+        // KAN-735 item 1(c): whether `get` being blocked (403) also means
+        // `power`/`upstream` are blocked is exactly the open question — so
+        // a failed precondition read must NOT skip the rest of this test.
+        // `power restart` is safe to attempt unconditionally regardless of
+        // starting state (it satisfies the "leave it running" ground rule
+        // either way); only the upstream round-trip genuinely needs `before`
+        // (to know there IS an existing modpack upstream to safely
+        // re-apply), so that part alone still skips without it.
+        console.log(
+          `SERVERS POWER/UPSTREAM: could not read ${id} before testing (exit ${beforeCode}) — proceeding with power restart anyway to determine whether it 403s too`,
+        );
+      } else {
+        console.log(`SERVERS POWER/UPSTREAM: ${id} starting state: status=${before.status} upstream=${JSON.stringify(before.upstream)}`);
       }
-      console.log(`SERVERS POWER/UPSTREAM: ${id} starting state: status=${before.status} upstream=${JSON.stringify(before.upstream)}`);
 
       try {
         const out = captureOutput();
@@ -127,8 +137,9 @@ describe("integration: servers power / upstream (DESTRUCTIVE — gated on RINTH_
         // back if this test were interrupted. Only round-trip (re-apply the
         // SAME project/version) when one is already configured — that still
         // exercises the real `upstream` command end to end while remaining
-        // fully restorable by construction.
-        if (before.upstream && before.upstream.kind === "modpack") {
+        // fully restorable by construction. Requires `before` (see above);
+        // skip cleanly (do not guess a project/version) when it's missing.
+        if (before && before.upstream && before.upstream.kind === "modpack") {
           const upstreamOut = captureOutput();
           const upstreamCode = await run([
             "--json",
@@ -151,7 +162,9 @@ describe("integration: servers power / upstream (DESTRUCTIVE — gated on RINTH_
           );
         } else {
           console.log(
-            `SERVERS UPSTREAM: ${id} has no modpack upstream configured (${JSON.stringify(before.upstream)}) — skipping the round-trip so this run never sets one it can't clear back`,
+            before
+              ? `SERVERS UPSTREAM: ${id} has no modpack upstream configured (${JSON.stringify(before.upstream)}) — skipping the round-trip so this run never sets one it can't clear back`
+              : `SERVERS UPSTREAM: could not read ${id}'s starting upstream — skipping the round-trip (nothing safe to restore to)`,
           );
         }
       } finally {
