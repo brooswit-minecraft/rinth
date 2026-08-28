@@ -11,8 +11,11 @@
 // shouldn't be able to produce (Usage/Generic) fails a test.
 
 import { describe, expect, spyOn, test } from "bun:test";
+import { AuthFeature, GenericModrinthClient, PanelVersionFeature } from "@modrinth/api-client";
+import type { AuthConfig } from "@modrinth/api-client";
 import { run } from "../../src/cli.ts";
 import { ExitCode } from "../../src/errors.ts";
+import { printHuman } from "../../src/output.ts";
 import { hasModrinthToken, hasTestServerId, RINTH_TEST_SERVER_ID } from "./harness.ts";
 
 /** mockImplementation forwards to the real console methods (so CI logs still show the output) while recording calls. */
@@ -44,6 +47,37 @@ interface ServerJson {
  */
 function detailFor(code: number, log: string, err: string): string {
   return code === ExitCode.Ok ? log : err;
+}
+
+/**
+ * KAN-735 item 1(c) final discriminator (epic comments 14607/14608): does
+ * POST /modrinth/v0/servers/<id>/reinstall 404 even before auth runs (a
+ * router-level "no such route", hypothesis A) or only after a real token
+ * is checked (route exists, auth gate first)? A literal garbage string
+ * that was never a real credential — never the real MODRINTH_TOKEN, never
+ * registered for redaction — makes this zero-risk regardless of outcome:
+ * an invalid token can't authenticate to mutate anything. Bypasses the
+ * `Transport`/command layer (same pattern as the other raw diagnostics in
+ * this suite) since `createRealTransport()` only ever reads the real
+ * `MODRINTH_TOKEN` env var.
+ */
+async function probeReinstallWithInvalidToken(serverId: string, projectId: string, versionId: string): Promise<void> {
+  try {
+    const authConfig: AuthConfig = { token: "kan735-diagnostic-not-a-real-token" };
+    const diagnosticClient = new GenericModrinthClient({
+      userAgent: "rinth-cli-diagnostic-KAN-735 (+https://github.com/brooswit-minecraft/rinth)",
+      features: [new AuthFeature(authConfig), new PanelVersionFeature()],
+    });
+    await diagnosticClient.archon.servers_v0.reinstall(serverId, { project_id: projectId, version_id: versionId });
+    printHuman(
+      `SERVERS UPSTREAM: reinstall with an INVALID token unexpectedly resolved without throwing — treat as a 2xx and report loudly on KAN-735.`,
+    );
+  } catch (error) {
+    const status = error && typeof error === "object" && "statusCode" in error ? (error as { statusCode?: number }).statusCode : undefined;
+    printHuman(
+      `SERVERS UPSTREAM: reinstall with an INVALID token (auth-vs-router control) => status ${status ?? "unknown"}: ${String((error as { message?: unknown })?.message ?? error)}`,
+    );
+  }
 }
 
 describe("integration: servers get", () => {
@@ -218,6 +252,8 @@ describe("integration: servers power / upstream (DESTRUCTIVE — gated on RINTH_
           console.log(
             `SERVERS GET: same nonexistent server id (403-vs-404 baseline) => exit ${bogusGetCode}: ${detailFor(bogusGetCode, bogusGetLog, bogusGetErr)}`,
           );
+
+          await probeReinstallWithInvalidToken(id, FORCED_PROBE_PROJECT, FORCED_PROBE_VERSION);
 
           // A second, DIFFERENT real public modpack ("Fabulously Optimized",
           // 1KVo5zza/8ikTAvpG) against the REAL server was also
