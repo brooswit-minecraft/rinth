@@ -107,12 +107,13 @@ enforces that this file has a `## [<version>]` heading matching the
   never expose this field.
 - KAN-735 diagnosis: measured against a real server, every per-server Archon
   endpoint this CLI calls (`get`/`power`/console WebSocket auth) is 403 with
-  the org's PAT while `servers list` succeeds; `reinstall` 404s instead —
-  see README "Known live blocker" for the three unresolved hypotheses why.
-  Not a PAT scope problem (labrinth's scope enum has no `SERVERS_*` entry);
-  most likely needs session-level JWT identity a PAT can't carry. A v1
-  content-API migration for `upstream` is a possible follow-up, not done
-  here.
+  the org's PAT while `servers list` succeeds; `reinstall` 404s instead — and
+  an invalid-token control confirmed this is a router-level 404 (the v0
+  `/reinstall` route doesn't resolve at all, regardless of credentials) —
+  see README "Known live blocker". Not a PAT scope problem (labrinth's scope
+  enum has no `SERVERS_*` entry); most likely needs session-level JWT
+  identity a PAT can't carry. A v1 content-API migration for `upstream` is a
+  possible follow-up, not done here.
 
 ## [0.2.0] - 2026-08-28
 

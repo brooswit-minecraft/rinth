@@ -193,20 +193,22 @@ This is not fixable by editing the PAT's scopes — labrinth's PAT scope enum
 has no `SERVERS_*` scope at all, so per-server access most likely requires
 session-level (browser-issued JWT) identity a PAT cannot carry.
 
-Why `reinstall` 404s instead of 403ing like the rest is unresolved — three
-hypotheses, none confirmed: (A) the v0 `/reinstall` route no longer exists
-(source research on the `modrinth/code` frontend found no current caller of
-`servers_v0.reinstall`; installs there go through a newer `content_v1` API
-instead), though the JSON error body (vs the other three's empty body)
-argues Archon evaluated *something*, weakening a pure "route is gone" read;
-(B) the route exists but 404s to hide an unauthorized resource rather than
-reveal it via 403; (C) `reinstall` only applies once an upstream already
-exists — the frontend's *first* install on a fresh server goes through
-`content_v1`, not `reinstall` — which would make a 404 on this fresh, empty
-server expected regardless of auth. `upstream` is kept as built (it's
-`@modrinth/api-client`'s documented call, and unreachable either way
-today); migrating it to the v1 content API, once one of the above is
-confirmed, is a follow-up not done here.
+Why `reinstall` 404s instead of 403ing like the rest is now confirmed, not
+just inferred: the identical request repeated with a deliberately invalid,
+never-real token still returned the exact same 404 "not found" — meaning
+the router never reaches an auth check for this route at all. Combined with
+a nonexistent server id and a second, different real modpack both getting
+the same byte-identical 404 (ruling out a pair- or server-specific cause),
+this is a router-level 404: **the v0 `/reinstall` route this CLI's
+`upstream` command targets does not resolve to anything live, regardless of
+credentials, server, or modpack.** (Source research on the `modrinth/code`
+frontend independently found no current caller of `servers_v0.reinstall`;
+installs there go through a newer `content_v1` API instead — consistent
+with the v0 route being retired.) `upstream` is kept as built (it's
+`@modrinth/api-client`'s documented call, matching the route the live docs
+don't cover either way); migrating it to the v1 content API is a follow-up,
+not done here — it would need a world id from a per-server `GET` that is
+itself 403, so it couldn't be verified live.
 
 ### `rinth servers exec <id> <command...>`
 
