@@ -1,9 +1,13 @@
-// T2 will register real commands (server list/start/stop, publish, etc.) here.
+// The command registry. Future commands (server start/stop, publish, etc.)
+// register here alongside whoami/servers.
 
-export interface Command {
-  readonly name: string;
-  readonly describe: string;
-  run(args: string[]): Promise<number> | number;
-}
+import { serversCommand } from "./servers.ts";
+import type { Command } from "./types.ts";
+import { whoamiCommand } from "./whoami.ts";
 
-export const commands: Readonly<Record<string, Command>> = {};
+export type { Command, CommandContext } from "./types.ts";
+
+export const commands: Readonly<Record<string, Command>> = {
+  whoami: whoamiCommand,
+  servers: serversCommand,
+};

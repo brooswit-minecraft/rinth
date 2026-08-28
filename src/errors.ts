@@ -22,3 +22,21 @@ export class CliError extends Error {
     this.exitCode = exitCode;
   }
 }
+
+/**
+ * Maps an HTTP status code (as seen on a failed API request) to the exit
+ * code taxonomy above. `undefined` means the request never got a response
+ * at all (DNS/connection/timeout failure), i.e. a network error.
+ */
+export function exitCodeForApiError(statusCode: number | undefined): ExitCode {
+  if (statusCode === undefined) {
+    return ExitCode.Network;
+  }
+  if (statusCode === 401 || statusCode === 403) {
+    return ExitCode.AuthMissing;
+  }
+  if (statusCode === 404) {
+    return ExitCode.NotFound;
+  }
+  return ExitCode.ApiError;
+}
