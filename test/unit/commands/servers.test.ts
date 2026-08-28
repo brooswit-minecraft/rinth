@@ -509,6 +509,52 @@ describe("rinth servers exec", () => {
     expect(socket.closed).toBe(true);
   });
 
+  test("a remote close after the command was sent reports the collected output (exit 0), not a failure", async () => {
+    // Regression test: an idle console closing the socket right after
+    // processing a command is normal, not a connection failure — the
+    // reviewer reproduced this against the fake socket (see PR #5 review):
+    // open -> auth-ok -> log("there are 2 players") -> close with
+    // --wait 500 --json used to exit 6 with an empty `lines`, discarding
+    // the line that was already collected.
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const socket = createFakeConsoleSocket();
+    const transport = createFakeTransport({ wsAuth: FIXTURE_WS_AUTH, socket });
+
+    const runPromise = run(["--json", "servers", "exec", "srv", "--wait", "500", "list"], { transport });
+    await tick();
+
+    socket.emitOpen();
+    socket.emitEvent({ event: "auth-ok" });
+    socket.emitEvent({ event: "log", stream: "stdout", message: "there are 2 players" });
+    socket.emitClose();
+
+    const code = await runPromise;
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(String(logSpy.mock.calls[0]?.[0])).toBe(
+      JSON.stringify({ id: "srv", command: "list", lines: ["there are 2 players"] }),
+    );
+    logSpy.mockRestore();
+  });
+
+  test("a remote close BEFORE the command is sent (pre auth-ok) still maps to exit code 6", async () => {
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+    const socket = createFakeConsoleSocket();
+    const transport = createFakeTransport({ wsAuth: FIXTURE_WS_AUTH, socket });
+
+    const runPromise = run(["servers", "exec", "srv_1", "say", "hello"], { transport });
+    await tick();
+
+    socket.emitOpen();
+    socket.emitClose();
+
+    const code = await runPromise;
+    errSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Network);
+    expect(socket.closed).toBe(true);
+  });
+
   test("a socket connection failure maps to exit code 6 and closes the socket", async () => {
     const errSpy = spyOn(console, "error").mockImplementation(() => {});
     const socket = createFakeConsoleSocket();

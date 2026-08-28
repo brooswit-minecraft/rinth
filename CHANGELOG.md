@@ -67,7 +67,11 @@ enforces that this file has a `## [<version>]` heading matching the
   code 6; WS-auth fetch failures use the existing HTTP-status mapping
   (404 -> 4, 401/403 -> 3, other 4xx/5xx incl. 426 -> 5). The console socket
   is always closed, on every exit path, and the whole operation has a hard
-  overall time ceiling so a wedged socket can never hang the CLI.
+  overall time ceiling so a wedged socket can never hang the CLI. A remote
+  close *after* the command was sent reports whatever output was collected
+  (exit 0), matching an ordinary console hanging up post-command, rather
+  than being treated as a connection failure — only a close before that
+  point (e.g. auth never completing) maps to exit 6.
 - The WebSocket auth token is registered with `src/redact.ts` as soon as
   it's fetched, before the socket does anything else, so it can never reach
   stdout/stderr — even if a server echoed it back in a console log line.

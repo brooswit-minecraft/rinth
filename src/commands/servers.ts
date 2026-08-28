@@ -213,6 +213,10 @@ async function exec(args: string[], ctx: CommandContext): Promise<number> {
 
   return await new Promise<number>((resolve, reject) => {
     let settled = false;
+    // Once the command has been sent, a socket close is the console hanging
+    // up normally (e.g. after an idle command) — not a failure — so it
+    // should report whatever output was collected instead of erroring.
+    let commandSent = false;
     let authTimer: ReturnType<typeof setTimeout> | undefined;
     let waitTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -246,10 +250,26 @@ async function exec(args: string[], ctx: CommandContext): Promise<number> {
       reject(error);
     }
 
+    // Shared by the --wait timer and a post-command close, so whichever
+    // happens first reports the same result: the collected lines, exit 0.
+    function finishCollected(): void {
+      if (settled) return;
+      if (ctx.json) {
+        printJson({ id, command: commandStr, lines });
+      }
+      succeed();
+    }
+
     socket.onError((error) =>
       fail(new CliError(`rinth servers exec: console connection failed: ${String(error)}`, ExitCode.Network)),
     );
-    socket.onClose(() => fail(new CliError("rinth servers exec: console connection closed unexpectedly", ExitCode.Network)));
+    socket.onClose(() => {
+      if (commandSent) {
+        finishCollected();
+      } else {
+        fail(new CliError("rinth servers exec: console connection closed unexpectedly", ExitCode.Network));
+      }
+    });
 
     socket.onOpen(() => {
       socket.send({ event: "auth", jwt: auth.token });
@@ -263,12 +283,8 @@ async function exec(args: string[], ctx: CommandContext): Promise<number> {
       if (event.event === "auth-ok") {
         clearTimeout(authTimer);
         socket.send({ event: "command", cmd: commandStr });
-        waitTimer = setTimeout(() => {
-          if (ctx.json) {
-            printJson({ id, command: commandStr, lines });
-          }
-          succeed();
-        }, wait);
+        commandSent = true;
+        waitTimer = setTimeout(finishCollected, wait);
       } else if (event.event === "auth-incorrect") {
         fail(new CliError("rinth servers exec: authentication rejected", ExitCode.AuthMissing));
       } else if (event.event === "log" || event.event === "log4j") {
