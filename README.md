@@ -351,6 +351,100 @@ the `sodium` project):
   latest` does not rely on response order — it parses and compares
   `date_published` explicitly.
 
+### `rinth publish`
+
+```
+rinth publish <project> --file <path.mrpack> --version <version_number>
+  [--name <n>] [--changelog <text> | --changelog-file <path>]
+  [--game-version <gv>]... [--loader <l>]...
+  [--channel release|beta|alpha] [--featured]
+  [--dependency <project_id>:<required|optional>]... [--dry-run]
+```
+
+`POST https://api.modrinth.com/v2/version` (multipart: a JSON `data` part
+plus the file part named in `data.file_parts`). `<project>` is resolved
+from an id or slug to its canonical `project_id` first (`GET
+/project/{idOrSlug}`). **The token needs the `create-version` scope** —
+the default read scopes are not enough.
+
+`--name` defaults to `--version`; `--channel` defaults to `release`;
+`--featured` defaults to `false`; `--game-version`/`--loader`/
+`--dependency` are repeatable. `--dependency` values look like
+`fabric-api:required` or `cloth-config:optional`. `--changelog` and
+`--changelog-file` are mutually exclusive (exit 2 if both are given); a
+missing `--changelog-file` is a clear error. A missing/nonexistent
+`--file` or a missing `--version` is a usage error (exit 2).
+
+**Duplicate guard**: before uploading, `publish` fetches the project's
+versions (`Transport#listVersions` — the same method `versions list`/
+`versions latest` use) and checks for an existing version with the same
+`version_number`. If one exists, it fails with **exit 5** naming the
+existing version's number and id, and the upload is never attempted.
+
+```sh
+$ rinth publish sodium --file build/sodium-fabric-0.6.0+mc1.20.4.mrpack \
+    --version 0.6.0 --game-version 1.20.4 --loader fabric --channel release
+v3xzKq7m  https://modrinth.com/project/sodium/version/v3xzKq7m
+```
+
+**`--json`** prints the created version object, unmodified API shape.
+
+**`--dry-run`** prints the request payload that would be sent — the
+`data` JSON plus the file part name and size — and exits 0 **without
+sending anything and without requiring `MODRINTH_TOKEN`**: it never
+resolves `<project>` to a canonical id either (that itself requires a
+network call), so `data.project_id` in the dry-run payload is the project
+identifier exactly as typed, not the resolved id. Output is redacted like
+every other command, so a set `MODRINTH_TOKEN` never leaks into it (there
+is nothing to redact anyway — it never touches the token).
+
+```sh
+$ rinth publish sodium --file build/pack.mrpack --version 0.6.0 --dry-run
+{
+  "data": {
+    "project_id": "sodium",
+    "version_number": "0.6.0",
+    "name": "0.6.0",
+    "changelog": "",
+    "game_versions": [],
+    "loaders": [],
+    "version_type": "release",
+    "featured": false,
+    "dependencies": [],
+    "file_parts": [
+      "pack.mrpack"
+    ],
+    "primary_file": "pack.mrpack"
+  },
+  "file": {
+    "part": "pack.mrpack",
+    "size": 42
+  }
+}
+```
+
+**Upload path** (see `src/client/real.ts` for the full account): the
+ticket's two candidate `@modrinth/api-client` upload routes
+(`client.upload()`, and `client.labrinth.versions_v3.createVersion()`,
+which itself calls `client.upload()`) both throw immediately under Bun.
+`GenericModrinthClient extends XHRUploadClient`, whose upload path
+constructs a `new XMLHttpRequest()` — a browser-only global that Bun does
+not provide (`typeof XMLHttpRequest === "undefined"`, confirmed with a
+standalone repro). So `Transport#createVersion` uses a single raw `fetch`
+instead: same Bearer token, User-Agent, and `X-Panel-Version` header as
+every other request in this file, and still routed through the same
+`toCliError()` mapping. This is a Bun/Node runtime incompatibility with
+the package's upload client, not a live-API issue.
+
+**Integration test**: `test/integration/publish.integration.test.ts` is
+gated on `RINTH_TEST_PROJECT` (unset by default — it names a real project
+you're willing to publish throwaway versions to) on top of the usual
+`MODRINTH_TOKEN` gate, and skips cleanly, logging that it needs
+`RINTH_TEST_PROJECT`, when unset. If it does run, it publishes a real
+version numbered `0.0.0-rinth-test-<timestamp>` and deletes it afterwards
+via `versions_v2.deleteVersion(id)` — do not point `RINTH_TEST_PROJECT` at
+a project whose version history you care about.
+
 ## Exit codes
 
 | Code | Meaning                              |

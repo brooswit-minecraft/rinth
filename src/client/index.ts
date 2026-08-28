@@ -73,6 +73,38 @@ export interface VersionFilters {
   limit?: number;
 }
 
+/** A single `--dependency <project_id>:<required|optional>` entry, in the shape labrinth's `data.dependencies` expects. */
+export interface CreateVersionDependency {
+  project_id: string;
+  dependency_type: "required" | "optional";
+}
+
+/**
+ * The JSON `data` part of labrinth's `POST /version` (v2) multipart body —
+ * see `rinth publish`. Field set matches what the ticket/live docs specify;
+ * `project_id` must be the project's canonical id (resolved from a slug via
+ * `getProject`, not sent as-typed by the user).
+ */
+export interface CreateVersionRequest {
+  project_id: string;
+  version_number: string;
+  name: string;
+  changelog: string;
+  game_versions: string[];
+  loaders: string[];
+  version_type: Labrinth.Versions.v2.VersionType;
+  featured: boolean;
+  dependencies: CreateVersionDependency[];
+  file_parts: string[];
+  primary_file: string;
+}
+
+/** The single file uploaded alongside `CreateVersionRequest`. `name` must equal the entry in `file_parts`/`primary_file`. */
+export interface CreateVersionFile {
+  name: string;
+  data: Uint8Array;
+}
+
 export interface Transport {
   /** GET labrinth `/user` (v2) — the authenticated user. */
   getCurrentUser(): Promise<Labrinth.Users.v2.User>;
@@ -92,6 +124,10 @@ export interface Transport {
   openSocket(url: string): ConsoleSocket;
   /** GET labrinth `/project/{idOrSlug}/version` (v2) — a project's versions, unmodified API shape. */
   listVersions(project: string, filters?: VersionFilters): Promise<Labrinth.Versions.v2.Version[]>;
+  /** GET labrinth `/project/{idOrSlug}` (v2) — resolves a slug (or id) to its canonical project, e.g. for `project_id` in `createVersion`. */
+  getProject(idOrSlug: string): Promise<Labrinth.Projects.v2.Project>;
+  /** POST labrinth `/version` (v2), multipart — creates a version with its file attached. See `src/client/real.ts` for why this bypasses the API client's own upload path. */
+  createVersion(data: CreateVersionRequest, file: CreateVersionFile): Promise<Labrinth.Versions.v2.Version>;
 }
 
 export { createRealTransport } from "./real.ts";

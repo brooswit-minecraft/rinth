@@ -8,6 +8,8 @@ import { CliError, type CliErrorOptions, type ExitCode } from "../errors.ts";
 import type { Archon, Labrinth } from "@modrinth/api-client";
 import type {
   ConsoleSocket,
+  CreateVersionFile,
+  CreateVersionRequest,
   PowerAction,
   PublicServer,
   ServerDetail,
@@ -35,6 +37,14 @@ export interface FakeTransportFixtures {
   versionsError?: CliError;
   /** Called synchronously with the exact args `listVersions` received, so tests can assert filter pass-through. */
   onListVersions?: (project: string, filters: VersionFilters | undefined) => void;
+  project?: Labrinth.Projects.v2.Project;
+  projectError?: CliError;
+  /** Called synchronously with the exact arg `getProject` received. */
+  onGetProject?: (idOrSlug: string) => void;
+  createdVersion?: Labrinth.Versions.v2.Version;
+  createVersionError?: CliError;
+  /** Called synchronously with the exact args `createVersion` received, so tests can assert the upload was (or wasn't) attempted, e.g. on the duplicate-version and --dry-run paths. */
+  onCreateVersion?: (data: CreateVersionRequest, file: CreateVersionFile) => void;
 }
 
 export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Transport {
@@ -108,6 +118,28 @@ export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Trans
         throw fixtures.versionsError;
       }
       return fixtures.versions ?? [];
+    },
+
+    async getProject(idOrSlug) {
+      fixtures.onGetProject?.(idOrSlug);
+      if (fixtures.projectError) {
+        throw fixtures.projectError;
+      }
+      if (!fixtures.project) {
+        throw new Error("createFakeTransport: no `project` fixture provided");
+      }
+      return fixtures.project;
+    },
+
+    async createVersion(data, file) {
+      fixtures.onCreateVersion?.(data, file);
+      if (fixtures.createVersionError) {
+        throw fixtures.createVersionError;
+      }
+      if (!fixtures.createdVersion) {
+        throw new Error("createFakeTransport: no `createdVersion` fixture provided");
+      }
+      return fixtures.createdVersion;
     },
   };
 }
