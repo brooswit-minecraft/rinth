@@ -15,16 +15,19 @@ import { hasModrinthToken } from "./harness.ts";
 
 describe("integration: whoami (labrinth /user auth spike)", () => {
   test.skipIf(!hasModrinthToken)("reports whether the PAT is accepted by labrinth /user", async () => {
-    // The labrinth /user response can carry the account's email
-    // (`Labrinth.Users.v2.User.email`) — this repo is public, so the
-    // spy here must NOT forward console.log's raw args to the real
-    // console (that would put the full --json body, email included, into
-    // a public Actions log). Only `id`/`username`, pulled out below, are
-    // ever printed for real.
-    const realLog = console.log.bind(console);
-    const realError = console.error.bind(console);
+    // These spies CAPTURE the command's output instead of forwarding it to
+    // the real console. That is deliberate and load-bearing: the labrinth
+    // /user response carries the account's email
+    // (`Labrinth.Users.v2.User.email`), `rinth --json whoami` prints that
+    // object verbatim, and this repository's Actions logs are public — so
+    // forwarding would put the email into a public log. Only the derived,
+    // non-PII fields are printed below, after the spies are restored.
+    // Do not restore forwarding here.
+    // (KAN-720 and KAN-721 fixed this independently; this is the union —
+    // stderr is captured too, and its text still reaches the log through
+    // the `lastErr` interpolations in the branches below.)
     const logSpy = spyOn(console, "log").mockImplementation(() => {});
-    const errSpy = spyOn(console, "error").mockImplementation((...args) => realError(...args));
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
 
     const code = await run(["--json", "whoami"]);
 
@@ -36,7 +39,10 @@ describe("integration: whoami (labrinth /user auth spike)", () => {
     if (code === ExitCode.Ok) {
       const user = JSON.parse(lastLog) as { id?: unknown; username?: unknown };
       expect(typeof user.id).toBe("string");
-      realLog(`AUTH SPIKE: labrinth GET /v2/user (Bearer PAT) => accepted (200), id ${user.id}, username ${user.username}`);
+      // id and username only — never the parsed object or `lastLog` itself.
+      console.log(
+        `AUTH SPIKE: labrinth GET /v2/user (Bearer PAT) => accepted (200), id ${user.id}, username ${user.username}`,
+      );
     } else if (code === ExitCode.AuthMissing) {
       console.log(`AUTH SPIKE: labrinth GET /v2/user (Bearer PAT) => rejected (401/403). ${lastErr}`);
       expect(code).toBe(ExitCode.AuthMissing);
