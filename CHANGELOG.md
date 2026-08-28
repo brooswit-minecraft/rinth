@@ -49,6 +49,33 @@ enforces that this file has a `## [<version>]` heading matching the
   `servers get` is token-gated only; `servers power`/`servers upstream` are
   additionally gated on `RINTH_TEST_SERVER_ID` (or `MODRINTH_SERVER_ID` as a
   fallback name) since they are destructive — see README.
+- `rinth servers exec <id> <command...>` (KAN-730): sends one console
+  command to a server over the Archon WebSocket console API and prints
+  whatever it reports back for a short collection window (`--wait <ms>`,
+  default `2000`). Human mode prints each collected line as it arrives;
+  `--json` prints a single `{ id, command, lines }` object once the window
+  closes, and nothing else. No output within the window is not an error —
+  exit `0` with an empty `lines` list.
+- The `Transport` seam gained `getWebSocketAuth` and an injectable
+  `openSocket`/`ConsoleSocket` factory (`src/client/index.ts`), so
+  `servers exec`'s auth handshake, command send, and log collection are all
+  unit-tested offline against a fake socket (`createFakeConsoleSocket` in
+  `src/client/fake.ts`) with zero network access.
+- Error mapping for `servers exec`: the console rejecting the WebSocket
+  auth token (`auth-incorrect`) or never confirming it in time both map to
+  exit code 3; a refused/failed/DNS-failed socket connection maps to exit
+  code 6; WS-auth fetch failures use the existing HTTP-status mapping
+  (404 -> 4, 401/403 -> 3, other 4xx/5xx incl. 426 -> 5). The console socket
+  is always closed, on every exit path, and the whole operation has a hard
+  overall time ceiling so a wedged socket can never hang the CLI.
+- The WebSocket auth token is registered with `src/redact.ts` as soon as
+  it's fetched, before the socket does anything else, so it can never reach
+  stdout/stderr — even if a server echoed it back in a console log line.
+- `test/integration/exec.integration.test.ts`: a live console-exec check,
+  gated on `MODRINTH_TOKEN` *and* `RINTH_TEST_SERVER_ID` (falling back to
+  `MODRINTH_SERVER_ID`) so it never runs from just a token, since it opens a
+  real console session against a real server. Sends the harmless read-only
+  `list` command, so the server's power state/upstream is never touched.
 
 ## [0.2.0] - 2026-08-28
 

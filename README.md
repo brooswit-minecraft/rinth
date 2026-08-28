@@ -5,8 +5,8 @@ One tested surface usable both by a human at a shell and by CI — there is no
 official Modrinth CLI.
 
 Status: client core + `whoami`/`servers list` (KAN-726), plus
-`servers get|power|upstream` (KAN-728), on top of the scaffold and CI gate
-stack from KAN-725.
+`servers get|power|upstream` (KAN-728) and `servers exec` (KAN-730), on top
+of the scaffold and CI gate stack from KAN-725.
 
 ## Install / run
 
@@ -181,6 +181,45 @@ on its own — the safe default until this is confirmed live one way or the
 other (see the code comment above `upstream()` in
 `src/commands/servers.ts`).
 
+### `rinth servers exec <id> <command...>`
+
+Sends one console command to a server over the Archon WebSocket console API
+and prints whatever it prints back for a short window. Everything after
+`<id>` is the command, joined with spaces:
+
+```sh
+rinth servers exec ff783f0f-ec3c-4037-b39f-452ce590891d say hello world
+```
+
+Flow: fetch WebSocket auth for the server, open the console socket,
+authenticate, send the command, collect `log`/`log4j` lines for the
+collection window, then close the socket. **A command that produces no
+output within the window is not an error** — it exits `0` with an empty
+line list, since plenty of console commands (e.g. `stop`) never print
+anything the console socket forwards back.
+
+**`--wait <ms>`** sets the collection window — how long to keep listening
+for output after the command is sent. Defaults to `2000`. Anywhere in the
+arguments (`--wait <ms>` may come before or after `<id>`, but not inside the
+command itself once past `<id>` unless it's the literal command text):
+
+```sh
+rinth servers exec ff783f0f-ec3c-4037-b39f-452ce590891d --wait 5000 list
+```
+
+Human mode prints each collected line as it arrives, nothing else.
+**JSON shape** — a single object printed once, after the window closes, with
+nothing else on stdout while streaming:
+
+```json
+{ "id": "ff783f0f-ec3c-4037-b39f-452ce590891d", "command": "say hello world", "lines": ["[Server] hello world"] }
+```
+
+The console socket is always closed, on every exit path, including a timed-
+out authentication handshake — the command can never hang the process. The
+WebSocket auth token (fetched per invocation, short-lived) is registered
+with the same redaction path as `MODRINTH_TOKEN` and never appears in output.
+
 ## Exit codes
 
 | Code | Meaning                              |
@@ -200,6 +239,12 @@ indistinguishable from a rejected token. `@modrinth/api-client` does not
 send this header by default (confirmed by reading its source); the real
 transport (`src/client/real.ts`) adds it explicitly via the client's
 `PanelVersionFeature`. A 426 maps to exit code 5 (API error), not 3.
+
+Note: for `servers exec`, the console socket rejecting the WebSocket auth
+token (`auth-incorrect`) or never confirming it within the internal
+authentication timeout both map to exit code 3, the same as a rejected
+`MODRINTH_TOKEN` elsewhere. A refused/failed/never-established socket
+connection maps to exit code 6 (network error).
 
 ## Tests
 

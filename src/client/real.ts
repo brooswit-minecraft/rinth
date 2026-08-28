@@ -23,7 +23,7 @@ import {
 import type { Archon, AuthConfig, Labrinth } from "@modrinth/api-client";
 import { requireToken } from "../auth.ts";
 import { CliError, exitCodeForApiError } from "../errors.ts";
-import type { PowerAction, PublicServer, ServerDetail, Transport } from "./index.ts";
+import type { ConsoleSocket, PowerAction, PublicServer, ServerDetail, Transport } from "./index.ts";
 
 /** Exported for unit testing offline — maps a caught API error to a CliError with no network I/O. */
 export function toCliError(error: unknown): CliError {
@@ -79,6 +79,43 @@ export function toServerDetail(server: Archon.Servers.v0.Server): ServerDetail {
   };
 }
 
+/**
+ * Wraps a platform `WebSocket` (Bun/browser standard API) behind the
+ * `ConsoleSocket` seam so `servers exec` can be unit-tested against a fake
+ * socket instead. Not routed through `call()`/`toCliError` — those map
+ * failed *HTTP requests*, but a socket's `error`/`close` events carry no
+ * HTTP status to map, so the command itself decides the exit code.
+ */
+function wrapWebSocket(socket: WebSocket): ConsoleSocket {
+  return {
+    send(message) {
+      socket.send(JSON.stringify(message));
+    },
+    close() {
+      socket.close();
+    },
+    onOpen(handler) {
+      socket.addEventListener("open", () => handler());
+    },
+    onEvent(handler) {
+      socket.addEventListener("message", (messageEvent) => {
+        try {
+          const event = JSON.parse(String(messageEvent.data)) as Archon.Websocket.v0.WSEvent;
+          handler(event);
+        } catch {
+          // Malformed/unrecognized frame — ignore rather than crash the console session.
+        }
+      });
+    },
+    onError(handler) {
+      socket.addEventListener("error", (errorEvent) => handler(errorEvent));
+    },
+    onClose(handler) {
+      socket.addEventListener("close", () => handler());
+    },
+  };
+}
+
 export function createRealTransport(): Transport {
   const token = requireToken();
   // AuthFeature's declared constructor type is inherited from
@@ -126,5 +163,9 @@ export function createRealTransport(): Transport {
         );
         return project.id;
       }),
+
+    getWebSocketAuth: (serverId) => call(() => client.archon.servers_v0.getWebSocketAuth(serverId)),
+
+    openSocket: (url) => wrapWebSocket(new WebSocket(url)),
   };
 }
