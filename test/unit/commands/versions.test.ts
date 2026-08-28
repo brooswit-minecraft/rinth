@@ -93,6 +93,47 @@ describe("parseVersionsFlags", () => {
       expect((err as { exitCode?: number }).exitCode).toBe(ExitCode.Usage);
     }
   });
+
+  test("rejects --limit with a usage error (exit 2) when allowLimit is false", () => {
+    try {
+      parseVersionsFlags(["sodium", "--limit", "5"], { allowLimit: false });
+      throw new Error("expected parseVersionsFlags to throw");
+    } catch (err) {
+      expect((err as { exitCode?: number }).exitCode).toBe(ExitCode.Usage);
+    }
+  });
+
+  test("allows --limit by default (allowLimit defaults to true)", () => {
+    const flags = parseVersionsFlags(["sodium", "--limit", "5"]);
+    expect(flags.limit).toBe(5);
+  });
+
+  test("rejects an unrecognized flag with a usage error (exit 2)", () => {
+    try {
+      parseVersionsFlags(["sodium", "--bogus"]);
+      throw new Error("expected parseVersionsFlags to throw");
+    } catch (err) {
+      expect((err as { exitCode?: number }).exitCode).toBe(ExitCode.Usage);
+    }
+  });
+
+  test("rejects an unrecognized flag even when a valid filter is also present (no silent drop)", () => {
+    try {
+      parseVersionsFlags(["sodium", "--bogus", "--limit", "1"]);
+      throw new Error("expected parseVersionsFlags to throw");
+    } catch (err) {
+      expect((err as { exitCode?: number }).exitCode).toBe(ExitCode.Usage);
+    }
+  });
+
+  test("rejects a second bare positional with a usage error (exit 2)", () => {
+    try {
+      parseVersionsFlags(["sodium", "extra"]);
+      throw new Error("expected parseVersionsFlags to throw");
+    } catch (err) {
+      expect((err as { exitCode?: number }).exitCode).toBe(ExitCode.Usage);
+    }
+  });
 });
 
 describe("rinth versions list", () => {
@@ -304,6 +345,16 @@ describe("rinth versions latest", () => {
     const code = await run(["versions", "latest", "sodium", "--channel", "alpha"], { transport });
 
     expect(code).toBe(ExitCode.NotFound);
+    errSpy.mockRestore();
+  });
+
+  test("--limit is rejected with a usage error (exit 2): --limit is server-side, --channel is client-side, so limiting first can silently return a stale or missing match", async () => {
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+    const transport = createFakeTransport({ versions: [fixtureVersion()] });
+
+    const code = await run(["versions", "latest", "sodium", "--limit", "5"], { transport });
+
+    expect(code).toBe(ExitCode.Usage);
     errSpy.mockRestore();
   });
 

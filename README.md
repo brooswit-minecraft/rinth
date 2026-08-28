@@ -99,9 +99,21 @@ token-requiring real transport). `--loader`/`--game-version` are
 repeatable and sent as server-side filters; `--channel` (release/beta/alpha)
 is **not** a server-side filter on this endpoint, so it is applied
 client-side against the returned `version_type` field. `--limit` is
-forwarded to the API client's request as documented by its types, though
+forwarded to the API client's request and **is honored server-side**
+(confirmed empirically — undocumented on the live docs, but real), though
 the live labrinth docs do not document a `limit`/`offset` param on this
-endpoint — see "Notes on live-API behavior" below.
+endpoint at all — see "Notes on live-API behavior" below.
+
+**Caveat: `--limit` is applied before `--channel`.** Because `--limit` is a
+server-side page size and `--channel` is a client-side filter applied to
+whatever that page contains, combining them can return fewer rows than
+you'd expect — or none — even when matching versions exist further down
+the project's full version history. For example, `--limit 5 --channel
+release` on a project whose 5 most recent versions are all beta/alpha
+returns zero rows, even if the project has plenty of release versions
+overall. If you need a channel-filtered result, prefer omitting `--limit`
+(or set it generously) rather than assuming the two compose like two
+independent filters.
 
 ```sh
 rinth versions list sodium --loader fabric --game-version 1.20.4 --channel release
@@ -138,9 +150,17 @@ in `--json` mode) and exits 0.
 
 ### `rinth versions latest`
 
-Same filters as `versions list`, but resolves to a single version: the
-newest match by `date_published` (compared as parsed dates, not response
-order — see "Notes on live-API behavior" below).
+Same filters as `versions list` **except `--limit`, which is not
+supported here** (rejected with a usage error, exit 2) — resolves to a
+single version: the newest match by `date_published` (compared as parsed
+dates, not response order — see "Notes on live-API behavior" below).
+`--limit` is deliberately excluded because it's applied server-side while
+`--channel` is applied client-side (see the caveat under `versions list`
+above): limiting the candidate set before filtering by channel could
+silently return a stale version, or no match at all, instead of the
+project's actual newest matching version. Since `versions latest` is what
+picks the version id handed to a deploy, that failure mode would be
+dangerous to allow silently.
 
 ```sh
 rinth versions latest sodium --loader fabric --game-version 1.20.4
