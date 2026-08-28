@@ -26,13 +26,15 @@ describe("integration: servers exec (Archon console WebSocket)", () => {
     async () => {
       const serverId = RINTH_TEST_SERVER_ID as string;
 
-      // mockImplementation forwards to the real console methods (so CI logs
-      // still show the output) while also recording calls for inspection —
-      // a bare spyOn() with no mockImplementation records nothing here.
-      const realLog = console.log.bind(console);
-      const realError = console.error.bind(console);
-      const logSpy = spyOn(console, "log").mockImplementation((...args) => realLog(...args));
-      const errSpy = spyOn(console, "error").mockImplementation((...args) => realError(...args));
+      // These spies CAPTURE the command's output instead of forwarding it to
+      // the real console. `servers exec ... list` returns the server console's
+      // own reply, which for `list` is the names of the players currently
+      // online — third-party personal data — and this repository's Actions
+      // logs are public. Do not restore forwarding: the test's purpose (proof
+      // that console output actually came back) survives as the line COUNT
+      // logged below, never the lines themselves. (KAN-721 epic review.)
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
 
       const code = await run(["--json", "servers", "exec", serverId, "--wait", "3000", "list"]);
 
@@ -47,7 +49,9 @@ describe("integration: servers exec (Archon console WebSocket)", () => {
         expect(result.command).toBe("list");
         expect(Array.isArray(result.lines)).toBe(true);
         const lineCount = (result.lines as unknown[]).length;
-        console.log(`EXEC SPIKE: sent "list" to ${serverId} over the console WebSocket, got ${lineCount} line(s) back`);
+        // Count only — never `result.lines`, which carries the server
+        // console's reply (player names for `list`).
+        console.log(`EXEC SPIKE: exec => status ${code}, ${lineCount} lines received`);
       } else if (code === ExitCode.AuthMissing) {
         console.log(`EXEC SPIKE: console auth rejected or timed out. ${lastErr}`);
         expect(code).toBe(ExitCode.AuthMissing);
