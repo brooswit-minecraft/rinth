@@ -31,8 +31,14 @@ export interface VersionsFlags {
   limit?: number;
 }
 
+export interface ParseVersionsFlagsOptions {
+  /** `versions latest` doesn't support --limit: it's server-side while --channel is client-side, so limiting before filtering can silently return a stale/no match. */
+  allowLimit?: boolean;
+}
+
 /** Pure flag parser, exported for direct unit testing. Throws CliError(Usage) on bad input. */
-export function parseVersionsFlags(args: string[]): VersionsFlags {
+export function parseVersionsFlags(args: string[], options: ParseVersionsFlagsOptions = {}): VersionsFlags {
+  const allowLimit = options.allowLimit ?? true;
   const loaders: string[] = [];
   const gameVersions: string[] = [];
   const positional: string[] = [];
@@ -60,6 +66,9 @@ export function parseVersionsFlags(args: string[]): VersionsFlags {
       }
       channel = value;
     } else if (arg === "--limit") {
+      if (!allowLimit) {
+        throw new CliError("Usage: rinth versions latest does not support --limit", ExitCode.Usage);
+      }
       const value = args[++i];
       if (value === undefined) {
         throw new CliError("Usage: --limit requires a value", ExitCode.Usage);
@@ -68,8 +77,13 @@ export function parseVersionsFlags(args: string[]): VersionsFlags {
       if (!Number.isFinite(limit)) {
         throw new CliError(`Invalid --limit: ${value} (expected a number)`, ExitCode.Usage);
       }
+    } else if (arg !== undefined && arg.startsWith("--")) {
+      throw new CliError(`Usage: unrecognized flag ${arg}`, ExitCode.Usage);
     } else if (arg !== undefined) {
       positional.push(arg);
+      if (positional.length > 1) {
+        throw new CliError(USAGE, ExitCode.Usage);
+      }
     }
   }
 
@@ -160,7 +174,7 @@ async function list(args: string[], ctx: CommandContext): Promise<number> {
 }
 
 async function latest(args: string[], ctx: CommandContext): Promise<number> {
-  const flags = parseVersionsFlags(args);
+  const flags = parseVersionsFlags(args, { allowLimit: false });
   const versions = await fetchMatchingVersions(flags, ctx);
 
   if (versions.length === 0) {
