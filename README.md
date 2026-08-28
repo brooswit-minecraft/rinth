@@ -38,7 +38,10 @@ Every command accepts a global `--json` flag. When set, the command writes a
 single JSON value to stdout and **nothing else** — no banners, no progress,
 no human text — so output is safe to pipe into `jq` or another program.
 Human-readable text goes to stdout when `--json` is not set. Errors always go
-to stderr, in both modes.
+to stderr, in both modes; on success, stdout carries exactly one JSON value
+and stderr is empty, and on failure stdout is left empty (there was no
+result to print) while stderr carries the error — see "Errors under
+`--json`" below for that error's exact shape.
 
 ## Redaction
 
@@ -171,15 +174,41 @@ rinth --json servers upstream ff783f0f-ec3c-4037-b39f-452ce590891d \
 whether `POST /modrinth/v0/servers/:id/reinstall` restarts the server as
 part of reinstalling, or leaves it in whatever power state it was already
 in — **the docs simply do not say**, for either a loader or a modpack
-reinstall. This environment has no `MODRINTH_TOKEN`, so live behavior
-against the real server (`ff783f0f-ec3c-4037-b39f-452ce590891d`) could not
-be observed here either. Absent evidence that reinstall self-restarts,
-`--restart` is implemented as an explicit, separate `power(id, 'Restart')`
-call made *after* the upstream is set, so a caller who passes it gets a
-guaranteed bounce onto the new upstream regardless of what `reinstall` does
-on its own — the safe default until this is confirmed live one way or the
-other (see the code comment above `upstream()` in
-`src/commands/servers.ts`).
+reinstall. Live behavior could not settle this either — see the blocker
+below. Absent evidence that reinstall self-restarts, `--restart` is
+implemented as an explicit, separate `power(id, 'Restart')` call made
+*after* the upstream is set, so a caller who passes it gets a guaranteed
+bounce onto the new upstream regardless of what `reinstall` does on its
+own — the safe default until this is confirmed live one way or the other
+(see the code comment above `upstream()` in `src/commands/servers.ts`).
+
+**Known live blocker (KAN-735), measured against a real server:** with the
+org's `MODRINTH_TOKEN` PAT, `servers list` succeeds (200) but every
+per-server endpoint this CLI calls is denied — `get`/`power`/the console
+WebSocket auth all return 403 Forbidden with an empty body, while
+`upstream`'s `reinstall` call returns 404 Not Found with a small JSON body
+(not 403; `resolveProjectId` against labrinth succeeded first, so the 404
+is from Archon's `/reinstall` route itself, not project/slug resolution).
+This is not fixable by editing the PAT's scopes — labrinth's PAT scope enum
+has no `SERVERS_*` scope at all, so per-server access most likely requires
+session-level (browser-issued JWT) identity a PAT cannot carry.
+
+Why `reinstall` 404s instead of 403ing like the rest is now confirmed, not
+just inferred: the identical request repeated with a deliberately invalid,
+never-real token still returned the exact same 404 "not found" — meaning
+the router never reaches an auth check for this route at all. Combined with
+a nonexistent server id and a second, different real modpack both getting
+the same byte-identical 404 (ruling out a pair- or server-specific cause),
+this is a router-level 404: **the v0 `/reinstall` route this CLI's
+`upstream` command targets does not resolve to anything live, regardless of
+credentials, server, or modpack.** (Source research on the `modrinth/code`
+frontend independently found no current caller of `servers_v0.reinstall`;
+installs there go through a newer `content_v1` API instead — consistent
+with the v0 route being retired.) `upstream` is kept as built (it's
+`@modrinth/api-client`'s documented call, matching the route the live docs
+don't cover either way); migrating it to the v1 content API is a follow-up,
+not done here — it would need a world id from a per-server `GET` that is
+itself 403, so it couldn't be verified live.
 
 ### `rinth servers exec <id> <command...>`
 
@@ -245,6 +274,37 @@ token (`auth-incorrect`) or never confirming it within the internal
 authentication timeout both map to exit code 3, the same as a rejected
 `MODRINTH_TOKEN` elsewhere. A refused/failed/never-established socket
 connection maps to exit code 6 (network error).
+
+### Errors under `--json`
+
+Every API-backed command routes its failures through the same `CliError`,
+which — in addition to the exit code above — carries the HTTP status (`null`
+for a non-HTTP failure, e.g. a usage error or a socket-level failure) and the
+`"<METHOD> <path>"` of the request that failed (`null` when there was none).
+
+- **Plain text** (`--json` not set): the stderr message includes both, e.g.
+
+  ```
+  HTTP 403 GET /modrinth/v0/servers/<id>: Forbidden
+  ```
+
+  When neither a status nor an endpoint applies (e.g. a usage error), the
+  message is unprefixed, as before.
+
+- **`--json`**: on any error, stdout is left empty (there was no result to
+  print) and a single JSON value is written to stderr:
+
+  ```json
+  {"error":{"code":3,"status":403,"endpoint":"GET /modrinth/v0/servers/<id>","message":"HTTP 403 GET /modrinth/v0/servers/<id>: Forbidden"}}
+  ```
+
+  `code` is the process exit code (same table as above); `status` is the raw
+  HTTP status or `null`; `endpoint` is `"<METHOD> <path>"` or `null`.
+
+This goes through the same `src/output.ts`/`src/redact.ts` path as every
+other write — there is no separate write path to the terminal, and a token
+embedded in an error message is scrubbed here exactly as it would be
+anywhere else (see `test/unit/cli.test.ts`).
 
 ## Tests
 

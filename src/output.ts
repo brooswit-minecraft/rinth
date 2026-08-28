@@ -17,3 +17,8 @@ export function printHuman(message: string): void {
 export function printError(message: string): void {
   console.error(redact(message));
 }
+
+/** `--json` mode's error path: one JSON value to stderr, redacted like everything else. */
+export function printJsonError(data: unknown): void {
+  console.error(redact(JSON.stringify(data)));
+}

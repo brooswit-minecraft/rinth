@@ -25,22 +25,34 @@ import { requireToken } from "../auth.ts";
 import { CliError, exitCodeForApiError } from "../errors.ts";
 import type { ConsoleSocket, PowerAction, PublicServer, ServerDetail, Transport } from "./index.ts";
 
-/** Exported for unit testing offline — maps a caught API error to a CliError with no network I/O. */
-export function toCliError(error: unknown): CliError {
+/**
+ * Exported for unit testing offline — maps a caught API error to a CliError
+ * with no network I/O. `endpoint` (`"<METHOD> <path>"`) is supplied by the
+ * call site below rather than read off the caught error: `GenericModrinthClient`
+ * overrides `normalizeError()` with a single-argument signature that drops
+ * the request-context second parameter the base class uses to populate
+ * `ModrinthApiError.context`, so that field is always empty here (confirmed
+ * by reading dist/index.js) — the CLI has to supply method+path itself.
+ */
+export function toCliError(error: unknown, endpoint?: string): CliError {
   const apiError = error instanceof ModrinthApiError ? error : ModrinthApiError.fromUnknown(error);
   const exitCode = exitCodeForApiError(apiError.statusCode);
-  const message =
+  const status = apiError.statusCode ?? null;
+  let message =
     apiError.statusCode === 426
       ? `${apiError.message} (missing/unsupported X-Panel-Version header)`
       : apiError.message;
-  return new CliError(message, exitCode);
+  if (status !== null && endpoint) {
+    message = `HTTP ${status} ${endpoint}: ${message}`;
+  }
+  return new CliError(message, exitCode, { status, endpoint: endpoint ?? null });
 }
 
-async function call<T>(fn: () => Promise<T>): Promise<T> {
+async function call<T>(fn: () => Promise<T>, endpoint: string): Promise<T> {
   try {
     return await fn();
   } catch (error) {
-    throw toCliError(error);
+    throw toCliError(error, endpoint);
   }
 }
 
@@ -131,22 +143,27 @@ export function createRealTransport(): Transport {
 
   return {
     getCurrentUser: () =>
-      call(() => client.request<Labrinth.Users.v2.User>("/user", { api: "labrinth", version: 2 })),
+      call(() => client.request<Labrinth.Users.v2.User>("/user", { api: "labrinth", version: 2 }), "GET /v2/user"),
 
     listServers: () =>
       call(async () => {
         const response = await client.archon.servers_v0.list();
         return response.servers.map(toPublicServer);
-      }),
+      }, "GET /modrinth/v0/servers"),
 
     getServer: (serverId: string) =>
-      call(async () => toServerDetail(await client.archon.servers_v0.get(serverId))),
+      call(
+        async () => toServerDetail(await client.archon.servers_v0.get(serverId)),
+        `GET /modrinth/v0/servers/${serverId}`,
+      ),
 
-    power: (serverId: string, action: PowerAction) => call(() => client.archon.servers_v0.power(serverId, action)),
+    power: (serverId: string, action: PowerAction) =>
+      call(() => client.archon.servers_v0.power(serverId, action), `POST /modrinth/v0/servers/${serverId}/power`),
 
     setUpstream: (serverId: string, projectId: string, versionId: string) =>
-      call(() =>
-        client.archon.servers_v0.reinstall(serverId, { project_id: projectId, version_id: versionId }),
+      call(
+        () => client.archon.servers_v0.reinstall(serverId, { project_id: projectId, version_id: versionId }),
+        `POST /modrinth/v0/servers/${serverId}/reinstall`,
       ),
 
     // Labrinth's `GET /project/:idOrSlug` accepts a project id OR its slug
@@ -162,9 +179,10 @@ export function createRealTransport(): Transport {
           { api: "labrinth", version: 2 },
         );
         return project.id;
-      }),
+      }, `GET /v2/project/${encodeURIComponent(projectIdOrSlug)}`),
 
-    getWebSocketAuth: (serverId) => call(() => client.archon.servers_v0.getWebSocketAuth(serverId)),
+    getWebSocketAuth: (serverId) =>
+      call(() => client.archon.servers_v0.getWebSocketAuth(serverId), `GET /modrinth/v0/servers/${serverId}/ws`),
 
     openSocket: (url) => wrapWebSocket(new WebSocket(url)),
   };

@@ -6,7 +6,12 @@
 import { createRealTransport, type Transport } from "./client/index.ts";
 import { commands } from "./commands/index.ts";
 import { CliError, ExitCode } from "./errors.ts";
-import { printError, printHuman } from "./output.ts";
+import { printError, printHuman, printJsonError } from "./output.ts";
+
+/** Shape of the single JSON value `--json` mode prints to stderr on any error. */
+function jsonError(code: ExitCode, status: number | null, endpoint: string | null, message: string) {
+  return { error: { code, status, endpoint, message } };
+}
 
 export interface ParsedArgs {
   json: boolean;
@@ -58,10 +63,19 @@ export async function run(argv: string[], deps: RunDeps = {}): Promise<number> {
     return await command.run(parsed.rest, { json: parsed.json, transport });
   } catch (err) {
     if (err instanceof CliError) {
-      printError(err.message);
+      if (parsed.json) {
+        printJsonError(jsonError(err.exitCode, err.status, err.endpoint, err.message));
+      } else {
+        printError(err.message);
+      }
       return err.exitCode;
     }
-    printError(err instanceof Error ? err.message : String(err));
+    const message = err instanceof Error ? err.message : String(err);
+    if (parsed.json) {
+      printJsonError(jsonError(ExitCode.Generic, null, null, message));
+    } else {
+      printError(message);
+    }
     return ExitCode.Generic;
   }
 }

@@ -80,6 +80,40 @@ enforces that this file has a `## [<version>]` heading matching the
   `MODRINTH_SERVER_ID`) so it never runs from just a token, since it opens a
   real console session against a real server. Sends the harmless read-only
   `list` command, so the server's power state/upstream is never touched.
+- `CliError` (`src/errors.ts`) now carries the HTTP `status` (`null` for a
+  non-HTTP failure) and the `"<METHOD> <path>"` `endpoint` of the request
+  that failed (`null` when there was none, e.g. a usage error), populated by
+  `toCliError()` in `src/client/real.ts` at each transport call site. The
+  plain-text stderr message is prefixed with both when present (e.g.
+  `HTTP 403 GET /modrinth/v0/servers/<id>: Forbidden`), and `--json` mode
+  prints a single JSON error object to stderr —
+  `{"error":{"code","status","endpoint","message"}}` — instead of plain
+  text, with stdout left empty; both go through the existing
+  `src/output.ts`/`src/redact.ts` path. See README "Errors under `--json`".
+- Fixed a PII leak in `test/integration/whoami.integration.test.ts`: it was
+  forwarding the raw labrinth `/user` `--json` body (which includes the
+  account's email) to the real console, landing it in this public repo's
+  Actions log. The spy no longer forwards; only `id`/`username` are ever
+  printed for real.
+- `.github/workflows/ci.yml`: `workflow_dispatch` gained a `server_id`
+  input, passed to the `integration` job as `RINTH_TEST_SERVER_ID`, so the
+  destructive `servers power`/`servers upstream`/`servers exec` integration
+  tests can be run on demand against a real server without a repo/org
+  variable (opt-in per dispatch).
+- `test/integration/servers.integration.test.ts` additionally logs each
+  live server's raw `current_user_permissions` (KAN-735 item 1(d)
+  diagnosis) via a one-off `@modrinth/api-client` call that bypasses the
+  `Transport`/command layer entirely — `PublicServer`/`ServerDetail` still
+  never expose this field.
+- KAN-735 diagnosis: measured against a real server, every per-server Archon
+  endpoint this CLI calls (`get`/`power`/console WebSocket auth) is 403 with
+  the org's PAT while `servers list` succeeds; `reinstall` 404s instead — and
+  an invalid-token control confirmed this is a router-level 404 (the v0
+  `/reinstall` route doesn't resolve at all, regardless of credentials) —
+  see README "Known live blocker". Not a PAT scope problem (labrinth's scope
+  enum has no `SERVERS_*` entry); most likely needs session-level JWT
+  identity a PAT can't carry. A v1 content-API migration for `upstream` is a
+  possible follow-up, not done here.
 
 ## [0.2.0] - 2026-08-28
 

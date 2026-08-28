@@ -4,7 +4,7 @@
 // exit code (see errors.ts's exitCodeForApiError, which the real transport
 // uses to build these same CliErrors from a live HTTP status).
 
-import { CliError, type ExitCode } from "../errors.ts";
+import { CliError, type CliErrorOptions, type ExitCode } from "../errors.ts";
 import type { Archon, Labrinth } from "@modrinth/api-client";
 import type { ConsoleSocket, PowerAction, PublicServer, ServerDetail, Transport } from "./index.ts";
 
@@ -156,6 +156,6 @@ export function createFakeConsoleSocket(): FakeConsoleSocket {
 }
 
 /** Build a CliError as the real transport would for a given HTTP failure. */
-export function apiError(exitCode: ExitCode, message = "simulated API error"): CliError {
-  return new CliError(message, exitCode);
+export function apiError(exitCode: ExitCode, message = "simulated API error", options?: CliErrorOptions): CliError {
+  return new CliError(message, exitCode, options);
 }

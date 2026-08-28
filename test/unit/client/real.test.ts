@@ -77,6 +77,29 @@ describe("toCliError", () => {
     const err = toCliError(new Error("boom"));
     expect(err.exitCode).toBe(ExitCode.Network);
   });
+
+  test("carries status and endpoint onto the CliError when an endpoint is given", () => {
+    const err = toCliError(new ModrinthApiError("Forbidden", { statusCode: 403 }), "GET /modrinth/v0/servers/srv_123");
+    expect(err.status).toBe(403);
+    expect(err.endpoint).toBe("GET /modrinth/v0/servers/srv_123");
+  });
+
+  test("prefixes the plain-text message with 'HTTP <status> <endpoint>:' when an endpoint is given", () => {
+    const err = toCliError(new ModrinthApiError("Forbidden", { statusCode: 403 }), "GET /modrinth/v0/servers/srv_123");
+    expect(err.message).toBe("HTTP 403 GET /modrinth/v0/servers/srv_123: Forbidden");
+  });
+
+  test("leaves the message unprefixed when no endpoint is given (existing callers)", () => {
+    const err = toCliError(new ModrinthApiError("Forbidden", { statusCode: 403 }));
+    expect(err.message).toBe("Forbidden");
+  });
+
+  test("has a null status but still carries the endpoint on a network failure (no HTTP response to attribute a status to)", () => {
+    const err = toCliError(new ModrinthApiError("connect failed", {}), "GET /modrinth/v0/servers/srv_123");
+    expect(err.status).toBeNull();
+    expect(err.endpoint).toBe("GET /modrinth/v0/servers/srv_123");
+    expect(err.message).toBe("connect failed");
+  });
 });
 
 describe("toPublicServer", () => {
@@ -254,6 +277,26 @@ describe("createRealTransport", () => {
 
       expect(caught).toBeInstanceOf(CliError);
       expect((caught as CliError).exitCode).toBe(ExitCode.NotFound);
+    });
+
+    test("getServer rejects with a CliError carrying status 403 and the resolved endpoint on a 403 response", async () => {
+      const fetchSpy = mockFetch(() => new Response(JSON.stringify({ error: "forbidden" }), { status: 403 }));
+
+      const transport = createRealTransport();
+      let caught: unknown;
+      try {
+        await transport.getServer("srv_123");
+      } catch (err) {
+        caught = err;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      const cliError = caught as CliError;
+      expect(cliError.exitCode).toBe(ExitCode.AuthMissing);
+      expect(cliError.status).toBe(403);
+      expect(cliError.endpoint).toBe("GET /modrinth/v0/servers/srv_123");
+      expect(cliError.message).toContain("HTTP 403 GET /modrinth/v0/servers/srv_123:");
     });
 
     test("getWebSocketAuth resolves with the parsed auth on a 200 response", async () => {
