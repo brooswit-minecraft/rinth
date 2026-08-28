@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/). CI
 enforces that this file has a `## [<version>]` heading matching the
 `version` field in `package.json` — see README.md.
 
+## [0.4.0] - 2026-08-28
+
+### Added
+
+- `rinth versions list <project> [--loader <l>] [--game-version <gv>]
+  [--channel release|beta|alpha] [--limit <n>]` — labrinth v2 `GET
+  /project/{id|slug}/version` via `client.labrinth.versions_v2.getProjectVersions()`.
+  `--loader`/`--game-version` are repeatable and forwarded as server-side
+  filters; `--channel` is applied client-side against `version_type`
+  because the endpoint does not support it as a filter (verified against
+  the live docs and the API client's request-building code). Human output
+  is an aligned table (id, version_number, channel, loaders, game
+  versions, date, primary file name); `--json` prints the unmodified API
+  array. An empty result is not an error — it prints a message and exits
+  0.
+- `rinth versions latest <project> [--loader <l>] [--game-version <gv>]
+  [--channel <c>]` — same filtering, then picks the newest match by
+  parsing and comparing `date_published` explicitly. The live API
+  empirically returns versions pre-sorted descending by `date_published`,
+  but that is not documented behavior, so this does not rely on response
+  order. No match exits 4 (`ExitCode.NotFound`).
+- `Transport#listVersions` (`src/client/index.ts` + `real.ts` + `fake.ts`):
+  the new command-shaped transport method both version commands share,
+  with a `VersionFilters` shape (`loaders`, `game_versions`, `limit`) that
+  maps 1:1 onto the API client's own filter params.
+- `rinth publish <project> --file <path.mrpack> --version <version_number>
+  [--name <n>] [--changelog <text> | --changelog-file <path>]
+  [--game-version <gv>]... [--loader <l>]... [--channel
+  release|beta|alpha] [--featured] [--dependency
+  <project_id>:<required|optional>]... [--dry-run]` — creates a version
+  with an uploaded file via labrinth v2 `POST /version` (multipart).
+  Resolves `<project>` (id or slug) to its canonical `project_id` via the
+  new `Transport#getProject`. Guards against duplicates: fetches the
+  project's versions via `Transport#listVersions` (reusing the existing
+  method, no second way to fetch versions) and fails with exit 5, naming
+  the existing version, if `--version` already exists — the upload is
+  never attempted in that case. `--changelog`/`--changelog-file` are
+  mutually exclusive (exit 2); `--name` defaults to `--version`;
+  `--channel` defaults to `release`; `--featured` defaults to `false`.
+  `--dry-run` prints the exact `data` payload plus the file part name and
+  size, sends nothing, and — because it never reads `ctx.transport` —
+  needs no `MODRINTH_TOKEN`. On success prints the created version's id
+  and Modrinth URL; `--json` prints the unmodified created version object.
+- **Upload path finding**: neither candidate route the ticket named
+  (`client.upload()`, or `client.labrinth.versions_v3.createVersion()`,
+  which itself calls `client.upload()`) works under Bun —
+  `GenericModrinthClient extends XHRUploadClient`, whose `upload()`
+  constructs a `new XMLHttpRequest()`, a browser-only global Bun does not
+  provide (`typeof XMLHttpRequest === "undefined"`), so both throw
+  immediately. `Transport#createVersion` falls back to a single raw
+  `fetch` (`src/client/real.ts`), sending the same Bearer token,
+  User-Agent, and `X-Panel-Version` header every other request carries,
+  still mapped through `toCliError()`.
+- `Transport#getProject` and `Transport#createVersion`
+  (`src/client/index.ts` + `real.ts` + `fake.ts`), plus `CreateVersionRequest`
+  /`CreateVersionDependency`/`CreateVersionFile` types for the multipart
+  payload shape.
+- `src/cli.ts`'s command dispatch now constructs the real transport lazily
+  (on first read of `ctx.transport`) instead of eagerly before every
+  command runs. Every existing command reads `ctx.transport` as its first
+  action, so this changes nothing observable for `whoami`/`servers`/
+  `versions` — it exists so `rinth publish --dry-run`, which never reads
+  `ctx.transport`, can satisfy its "no token required" requirement without
+  changing `createRealTransport()`'s own unconditional `requireToken()`.
+
 ## [0.3.0] - 2026-08-28
 
 ### Added

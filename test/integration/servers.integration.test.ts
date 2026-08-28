@@ -50,13 +50,15 @@ describe("integration: servers list (Archon auth spike)", () => {
   test.skipIf(!hasModrinthToken)(
     "reports whether the PAT is accepted by the Archon servers API, and the live server id if any",
     async () => {
-      // mockImplementation forwards to the real console methods (so CI logs
-      // still show the output) while also recording calls for inspection —
-      // a bare spyOn() with no mockImplementation records nothing here.
-      const realLog = console.log.bind(console);
-      const realError = console.error.bind(console);
-      const logSpy = spyOn(console, "log").mockImplementation((...args) => realLog(...args));
-      const errSpy = spyOn(console, "error").mockImplementation((...args) => realError(...args));
+      // These spies CAPTURE the command's output instead of forwarding it to
+      // the real console. `rinth --json servers list` is credential-trimmed
+      // (no sftp user/password, no panel token) but each server still
+      // carries `net: { ip, port, domain }` — the live server's address —
+      // and this repository's Actions logs are public. Only the derived
+      // count and server ids are logged below. Do not restore forwarding.
+      // (Same fix as whoami.integration.test.ts; see KAN-721 epic review.)
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
 
       const code = await run(["--json", "servers", "list"]);
 

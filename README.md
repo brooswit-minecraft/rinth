@@ -248,6 +248,202 @@ The console socket is always closed, on every exit path, including a timed-
 out authentication handshake — the command can never hang the process. The
 WebSocket auth token (fetched per invocation, short-lived) is registered
 with the same redaction path as `MODRINTH_TOKEN` and never appears in output.
+### `rinth versions list`
+
+`GET https://api.modrinth.com/v2/project/{idOrSlug}/version` (no auth
+required by the API itself, but every rinth command goes through the same
+token-requiring real transport). `--loader`/`--game-version` are
+repeatable and sent as server-side filters; `--channel` (release/beta/alpha)
+is **not** a server-side filter on this endpoint, so it is applied
+client-side against the returned `version_type` field. `--limit` is
+forwarded to the API client's request and **is honored server-side**
+(confirmed empirically — undocumented on the live docs, but real), though
+the live labrinth docs do not document a `limit`/`offset` param on this
+endpoint at all — see "Notes on live-API behavior" below.
+
+**Caveat: `--limit` is applied before `--channel`.** Because `--limit` is a
+server-side page size and `--channel` is a client-side filter applied to
+whatever that page contains, combining them can return fewer rows than
+you'd expect — or none — even when matching versions exist further down
+the project's full version history. For example, `--limit 5 --channel
+release` on a project whose 5 most recent versions are all beta/alpha
+returns zero rows, even if the project has plenty of release versions
+overall. If you need a channel-filtered result, prefer omitting `--limit`
+(or set it generously) rather than assuming the two compose like two
+independent filters.
+
+```sh
+rinth versions list sodium --loader fabric --game-version 1.20.4 --channel release
+```
+
+**Human output** — an aligned table:
+
+```
+id        version_number  channel  loaders  game versions  date                       primary file
+4GyXKCLd  mc1.20.4-0.5.8  release  fabric   1.20.4         2024-02-01T20:33:48.832862Z sodium-fabric-0.5.8+mc1.20.4.jar
+```
+
+**`--json`** — the array of version objects, **unmodified API shape** (an
+array at the top level, not wrapped in an object):
+
+```json
+[
+  {
+    "id": "4GyXKCLd",
+    "project_id": "AANobbMI",
+    "version_number": "mc1.20.4-0.5.8",
+    "version_type": "release",
+    "date_published": "2024-02-01T20:33:48.832862Z",
+    "game_versions": ["1.20.4"],
+    "loaders": ["fabric"],
+    "files": [{ "filename": "sodium-fabric-0.5.8+mc1.20.4.jar", "primary": true, "...": "..." }],
+    "...": "..."
+  }
+]
+```
+
+An empty result is not an error: it prints `No versions match.` (or `[]`
+in `--json` mode) and exits 0.
+
+### `rinth versions latest`
+
+Same filters as `versions list` **except `--limit`, which is not
+supported here** (rejected with a usage error, exit 2) — resolves to a
+single version: the newest match by `date_published` (compared as parsed
+dates, not response order — see "Notes on live-API behavior" below).
+`--limit` is deliberately excluded because it's applied server-side while
+`--channel` is applied client-side (see the caveat under `versions list`
+above): limiting the candidate set before filtering by channel could
+silently return a stale version, or no match at all, instead of the
+project's actual newest matching version. Since `versions latest` is what
+picks the version id handed to a deploy, that failure mode would be
+dangerous to allow silently.
+
+```sh
+rinth versions latest sodium --loader fabric --game-version 1.20.4
+```
+
+**Human output:**
+
+```
+4GyXKCLd  mc1.20.4-0.5.8
+```
+
+**`--json`** — a single version object (not an array), same shape as one
+element of `versions list`'s array.
+
+No match exits 4 (`ExitCode.NotFound`) with a clear message.
+
+**Notes on live-API behavior** (verified against
+[docs.modrinth.com](https://docs.modrinth.com) and a real request against
+the `sodium` project):
+
+- The endpoint's documented filters are `loaders`, `game_versions`, and
+  `featured`; there is no `version_type`/channel filter, so `--channel` is
+  applied client-side. `@modrinth/api-client`'s
+  `versions_v2.getProjectVersions()` also accepts `limit`/`offset` in its
+  TypeScript types and sends them as query params, but the live docs do
+  not document either as supported on this endpoint — this contradicts
+  the task's assumption that `--limit` is a plain server-side filter, so
+  treat it as best-effort until confirmed otherwise.
+- The live response for `sodium` came back already sorted descending by
+  `date_published`, but this is not documented behavior, so `versions
+  latest` does not rely on response order — it parses and compares
+  `date_published` explicitly.
+
+### `rinth publish`
+
+```
+rinth publish <project> --file <path.mrpack> --version <version_number>
+  [--name <n>] [--changelog <text> | --changelog-file <path>]
+  [--game-version <gv>]... [--loader <l>]...
+  [--channel release|beta|alpha] [--featured]
+  [--dependency <project_id>:<required|optional>]... [--dry-run]
+```
+
+`POST https://api.modrinth.com/v2/version` (multipart: a JSON `data` part
+plus the file part named in `data.file_parts`). `<project>` is resolved
+from an id or slug to its canonical `project_id` first (`GET
+/project/{idOrSlug}`). **The token needs the `create-version` scope** —
+the default read scopes are not enough.
+
+`--name` defaults to `--version`; `--channel` defaults to `release`;
+`--featured` defaults to `false`; `--game-version`/`--loader`/
+`--dependency` are repeatable. `--dependency` values look like
+`fabric-api:required` or `cloth-config:optional`. `--changelog` and
+`--changelog-file` are mutually exclusive (exit 2 if both are given); a
+missing `--changelog-file` is a clear error. A missing/nonexistent
+`--file` or a missing `--version` is a usage error (exit 2).
+
+**Duplicate guard**: before uploading, `publish` fetches the project's
+versions (`Transport#listVersions` — the same method `versions list`/
+`versions latest` use) and checks for an existing version with the same
+`version_number`. If one exists, it fails with **exit 5** naming the
+existing version's number and id, and the upload is never attempted.
+
+```sh
+$ rinth publish sodium --file build/sodium-fabric-0.6.0+mc1.20.4.mrpack \
+    --version 0.6.0 --game-version 1.20.4 --loader fabric --channel release
+v3xzKq7m  https://modrinth.com/project/sodium/version/v3xzKq7m
+```
+
+**`--json`** prints the created version object, unmodified API shape.
+
+**`--dry-run`** prints the request payload that would be sent — the
+`data` JSON plus the file part name and size — and exits 0 **without
+sending anything and without requiring `MODRINTH_TOKEN`**: it never
+resolves `<project>` to a canonical id either (that itself requires a
+network call), so `data.project_id` in the dry-run payload is the project
+identifier exactly as typed, not the resolved id. Output is redacted like
+every other command, so a set `MODRINTH_TOKEN` never leaks into it (there
+is nothing to redact anyway — it never touches the token).
+
+```sh
+$ rinth publish sodium --file build/pack.mrpack --version 0.6.0 --dry-run
+{
+  "data": {
+    "project_id": "sodium",
+    "version_number": "0.6.0",
+    "name": "0.6.0",
+    "changelog": "",
+    "game_versions": [],
+    "loaders": [],
+    "version_type": "release",
+    "featured": false,
+    "dependencies": [],
+    "file_parts": [
+      "pack.mrpack"
+    ],
+    "primary_file": "pack.mrpack"
+  },
+  "file": {
+    "part": "pack.mrpack",
+    "size": 42
+  }
+}
+```
+
+**Upload path** (see `src/client/real.ts` for the full account): the
+ticket's two candidate `@modrinth/api-client` upload routes
+(`client.upload()`, and `client.labrinth.versions_v3.createVersion()`,
+which itself calls `client.upload()`) both throw immediately under Bun.
+`GenericModrinthClient extends XHRUploadClient`, whose upload path
+constructs a `new XMLHttpRequest()` — a browser-only global that Bun does
+not provide (`typeof XMLHttpRequest === "undefined"`, confirmed with a
+standalone repro). So `Transport#createVersion` uses a single raw `fetch`
+instead: same Bearer token, User-Agent, and `X-Panel-Version` header as
+every other request in this file, and still routed through the same
+`toCliError()` mapping. This is a Bun/Node runtime incompatibility with
+the package's upload client, not a live-API issue.
+
+**Integration test**: `test/integration/publish.integration.test.ts` is
+gated on `RINTH_TEST_PROJECT` (unset by default — it names a real project
+you're willing to publish throwaway versions to) on top of the usual
+`MODRINTH_TOKEN` gate, and skips cleanly, logging that it needs
+`RINTH_TEST_PROJECT`, when unset. If it does run, it publishes a real
+version numbered `0.0.0-rinth-test-<timestamp>` and deletes it afterwards
+via `versions_v2.deleteVersion(id)` — do not point `RINTH_TEST_PROJECT` at
+a project whose version history you care about.
 
 ## Exit codes
 

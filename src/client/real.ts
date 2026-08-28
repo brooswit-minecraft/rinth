@@ -13,6 +13,24 @@
 // and archon requests are missing `X-Panel-Version: 1` and the Archon API
 // rejects them with HTTP 426 *before* evaluating auth, which would
 // otherwise look like an auth failure. Must be added explicitly.
+//
+// UPLOAD PATH: `createVersion` does NOT use the API client's own upload
+// support, despite KAN-731's ticket suggesting two candidate routes
+// (`client.upload()` directly, or `client.labrinth.versions_v3.createVersion()`).
+// Both were verified against the actual package (0.60.0) to be unusable
+// here: `GenericModrinthClient extends XHRUploadClient`, whose `upload()`
+// method (which `versions_v3.createVersion()` also calls internally —
+// confirmed by reading dist/index.js) constructs a `new XMLHttpRequest()`.
+// That's a browser-only global; `typeof XMLHttpRequest` is `"undefined"` in
+// Bun, so BOTH routes throw `ModrinthApiError: XMLHttpRequest is not
+// defined` immediately, before any request is sent — reproduced with a
+// standalone script calling `client.upload("/version", {api:"labrinth",
+// version:2, formData})`. This is a runtime incompatibility, not a live-API
+// issue, so per the ticket's own fallback instructions this falls back to
+// a single raw `fetch` (`createVersionRaw` below): it sends the same Bearer
+// token, User-Agent, and X-Panel-Version header the rest of this file's
+// requests carry, and still routes every failure through `toCliError()` via
+// `call()`, same as every other transport method. See PR body.
 
 import {
   AuthFeature,
@@ -23,7 +41,19 @@ import {
 import type { Archon, AuthConfig, Labrinth } from "@modrinth/api-client";
 import { requireToken } from "../auth.ts";
 import { CliError, exitCodeForApiError } from "../errors.ts";
-import type { ConsoleSocket, PowerAction, PublicServer, ServerDetail, Transport } from "./index.ts";
+import type {
+  ConsoleSocket,
+  CreateVersionFile,
+  CreateVersionRequest,
+  PowerAction,
+  PublicServer,
+  ServerDetail,
+  Transport,
+  VersionFilters,
+} from "./index.ts";
+
+const USER_AGENT = "rinth-cli (+https://github.com/brooswit-minecraft/rinth)";
+const LABRINTH_BASE_URL = "https://api.modrinth.com";
 
 /**
  * Exported for unit testing offline — maps a caught API error to a CliError
@@ -54,6 +84,42 @@ async function call<T>(fn: () => Promise<T>, endpoint: string): Promise<T> {
   } catch (error) {
     throw toCliError(error, endpoint);
   }
+}
+
+/** Exported for unit testing offline — builds the multipart body labrinth's `POST /version` (v2) expects: a JSON `data` part plus one file part named after `file.name` (must match an entry in `data.file_parts`). */
+export function buildCreateVersionFormData(data: CreateVersionRequest, file: CreateVersionFile): FormData {
+  const formData = new FormData();
+  formData.append("data", JSON.stringify(data));
+  formData.append(file.name, new Blob([file.data]), file.name);
+  return formData;
+}
+
+async function createVersionRaw(
+  token: string,
+  data: CreateVersionRequest,
+  file: CreateVersionFile,
+): Promise<Labrinth.Versions.v2.Version> {
+  const response = await fetch(`${LABRINTH_BASE_URL}/v2/version`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": USER_AGENT,
+      "X-Panel-Version": "1",
+    },
+    body: buildCreateVersionFormData(data, file),
+  });
+
+  if (!response.ok) {
+    const responseData: unknown = await response.json().catch(() => undefined);
+    const description =
+      responseData && typeof responseData === "object" && "description" in responseData
+        ? (responseData as { description?: unknown }).description
+        : undefined;
+    const message = typeof description === "string" ? description : `Upload failed with status ${response.status}`;
+    throw new ModrinthApiError(message, { statusCode: response.status, responseData });
+  }
+
+  return (await response.json()) as Labrinth.Versions.v2.Version;
 }
 
 /** Exported for unit testing offline — the field trim that keeps server credentials out of output. */
@@ -137,7 +203,7 @@ export function createRealTransport(): Transport {
   // excess-property-check gap in the package's own .d.ts.
   const authConfig: AuthConfig = { token };
   const client = new GenericModrinthClient({
-    userAgent: "rinth-cli (+https://github.com/brooswit-minecraft/rinth)",
+    userAgent: USER_AGENT,
     features: [new AuthFeature(authConfig), new PanelVersionFeature()],
   });
 
@@ -185,5 +251,20 @@ export function createRealTransport(): Transport {
       call(() => client.archon.servers_v0.getWebSocketAuth(serverId), `GET /modrinth/v0/servers/${serverId}/ws`),
 
     openSocket: (url) => wrapWebSocket(new WebSocket(url)),
+
+    listVersions: (project: string, filters?: VersionFilters) =>
+      call(
+        () => client.labrinth.versions_v2.getProjectVersions(project, filters),
+        `GET /v2/project/${encodeURIComponent(project)}/version`,
+      ),
+
+    getProject: (idOrSlug: string) =>
+      call(
+        () => client.labrinth.projects_v2.get(idOrSlug),
+        `GET /v2/project/${encodeURIComponent(idOrSlug)}`,
+      ),
+
+    createVersion: (data: CreateVersionRequest, file: CreateVersionFile) =>
+      call(() => createVersionRaw(token, data, file), "POST /v2/version"),
   };
 }

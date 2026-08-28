@@ -18,12 +18,18 @@ import { ExitCode } from "../../src/errors.ts";
 import { printHuman } from "../../src/output.ts";
 import { hasModrinthToken, hasTestServerId, RINTH_TEST_SERVER_ID } from "./harness.ts";
 
-/** mockImplementation forwards to the real console methods (so CI logs still show the output) while recording calls. */
+/**
+ * CAPTURES the command's output instead of forwarding it to the real
+ * console. Do not restore forwarding: these tests run `servers list` /
+ * `servers get`, whose `--json` payload carries the live server's name and
+ * `net: { ip, port, domain }`, and this repository's Actions logs are
+ * public. Every caller restores before printing its own derived summary, so
+ * the diagnostics still reach the log — only the raw payloads are withheld.
+ * (Same fix as whoami/servers integration tests; see KAN-721 epic review.)
+ */
 function captureOutput() {
-  const realLog = console.log.bind(console);
-  const realError = console.error.bind(console);
-  const logSpy = spyOn(console, "log").mockImplementation((...args) => realLog(...args));
-  const errSpy = spyOn(console, "error").mockImplementation((...args) => realError(...args));
+  const logSpy = spyOn(console, "log").mockImplementation(() => {});
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
   return {
     lastLog: () => String(logSpy.mock.calls.at(-1)?.[0]),
     lastErr: () => String(errSpy.mock.calls.at(-1)?.[0]),
