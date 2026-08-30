@@ -4,7 +4,7 @@ A Modrinth CLI (servers management + publish) wrapping [`@modrinth/api-client`](
 One tested surface usable both by a human at a shell and by CI — there is no
 official Modrinth CLI.
 
-Status: v0.9.0. Full command surface: `whoami`; `servers
+Status: v0.9.1. Full command surface: `whoami`; `servers
 list|get|power|upstream|exec`; `versions list|latest|delete`; `publish`;
 `project get|create|submit|edit|icon`. See "Known gaps / follow-ups" below
 for what still doesn't work against the live API.
@@ -15,7 +15,7 @@ Pin to a released tag — **not** a branch — so a consumer's install can't
 silently change under them:
 
 ```sh
-bunx --bun github:brooswit-minecraft/rinth#v0.8.0 --help
+bunx --bun github:brooswit-minecraft/rinth#v0.9.1 --help
 ```
 
 The `--bun` flag is required: it tells `bunx` to run the package's `bin`
@@ -29,7 +29,7 @@ TypeScript source under bun.
 - uses: oven-sh/setup-bun@v2
   with:
     bun-version: latest
-- run: bunx --bun github:brooswit-minecraft/rinth#v0.8.0 versions latest sodium --loader fabric --json
+- run: bunx --bun github:brooswit-minecraft/rinth#v0.9.1 versions latest sodium --loader fabric --json
   env:
     MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
 ```
@@ -67,16 +67,71 @@ with that second box's own `/home` listing (`booswrit`, `brooswit`, no
 places `booswrit` there and confirms `brooswit` has an account on both
 machines.
 
+**Upgrading an existing install? `bun remove -g` FIRST.** Running
+`bun install -g "github:...#<newtag>"` over an existing pin of the same
+package **silently does nothing**, and reports success while doing it. Both
+accounts below were re-pinned from `v0.8.0` to `v0.9.0`, and the first
+attempt failed exactly this way:
+
+```
+$ bun install -g "github:brooswit-minecraft/rinth#v0.9.0"
+installed @brooswit/rinth@github:brooswit-minecraft/rinth#4f11b4d with binaries:
+ - rinth
+[611.00ms] done
+```
+
+Exit 0, and it even names the correct `v0.9.0` commit. But
+`~/.bun/install/global/package.json` came out with a **duplicate key** —
+the new entry was appended rather than replacing the old one, and the stale
+`v0.8.0` entry won resolution:
+
+```json
+{
+  "dependencies": {
+    "@brooswit/rinth": "github:brooswit-minecraft/rinth#v0.8.0",
+    "@brooswit/rinth": "github:brooswit-minecraft/rinth#v0.9.0"
+  }
+}
+```
+
+The package left on disk was still `0.8.0`. Remove first:
+
+```sh
+bun remove -g @brooswit/rinth   # confirm the manifest entry and ~/.bun/bin/rinth are gone
+bun install -g "github:brooswit-minecraft/rinth#v0.9.1"
+```
+
+**And check a version-distinguishing flag, not just `--help`.** The two
+proofs used below — `rinth --help` and the exit-3 auth check — pass
+*identically* on `v0.8.0` and `v0.9.0`, so they would have certified that
+failed upgrade. Confirm the manifest has exactly one entry, that
+`~/.bun/install/global/node_modules/@brooswit/rinth/package.json` reports
+the expected `version`, and that a flag only the new release has is
+actually present:
+
+```sh
+env -i HOME="$HOME" TERM=xterm /usr/bin/fish -l -c 'rinth versions' 2>&1 | grep -c version-number
+```
+
+Note the `2>&1`: `rinth versions` writes its usage string to **stderr**, so
+piping stdout alone returns a false-negative `0` while the flag prints in
+plain sight. (The flag also appears as `[--version-number <v>]`, so match
+the substring rather than splitting on spaces — both of those false
+negatives were hit for real while verifying this.)
+
+Both accounts track the current release; the transcripts below were
+captured during the `v0.8.0` → `v0.9.0` re-pin, and are reproduced verbatim
+because the procedure and the two false negatives they document are
+unchanged. The commands show the version to install today.
+
 **Installed on `wroosbit`@`servyboi`:**
 
 ```sh
 export PATH="$HOME/.bun/bin:$PATH"   # only needed for this one-off install command
-bun install -g "github:brooswit-minecraft/rinth#v0.8.0"
+bun install -g "github:brooswit-minecraft/rinth#v0.9.1"
 ```
 
-This resolves the annotated tag `v0.8.0` (tag object `608cb8695b2796a663d82f3a623d974dabc18eb7`,
-dereferencing to commit `4ec35d9dee1bcc1bb4a590213ffe713024c9f1de` — the sha
-RINTH-9 tagged and pushed) and drops a `rinth` shim, a symlink to the
+This resolves the named annotated tag (never a branch) and drops a `rinth` shim, a symlink to the
 package's `src/cli.ts`, into `~/.bun/bin`. Chosen over the `bunx --bun`
 wrapper-script alternative because it's already how this box installs
 sibling tools (e.g. `drovr`) and it was verified to actually run the
@@ -120,6 +175,14 @@ MODRINTH_TOKEN is not set. Set it with: export MODRINTH_TOKEN=<your Modrinth API
 EXIT_STATUS=3
 ```
 
+And the version-distinguishing check, which is what actually proves the
+re-pin landed rather than merely that some `rinth` resolved:
+
+```
+$ env -i HOME="$HOME" TERM=xterm /usr/bin/fish -l -c 'rinth versions' 2>&1 | grep -c version-number
+1
+```
+
 No `MODRINTH_TOKEN` is set in `wroosbit`@`servyboi`'s environment, so the
 auth-check failure above (exit 3, naming `MODRINTH_TOKEN`) is the strongest
 available proof on this box — it confirms the real binary resolved from
@@ -133,11 +196,11 @@ so this install was performed and verified by the `booswrit` account
 directly, on that box, using the identical mechanism and tag:
 
 ```sh
-bun install -g "github:brooswit-minecraft/rinth#v0.8.0"
+bun install -g "github:brooswit-minecraft/rinth#v0.9.1"
 ```
 
 ```
-installed @brooswit/rinth@github:brooswit-minecraft/rinth#608cb86 with binaries:
+installed @brooswit/rinth@github:brooswit-minecraft/rinth#<tag object> with binaries:
  - rinth
 ```
 
@@ -145,7 +208,7 @@ Pinned to the same tag, recorded literally in
 `~/.bun/install/global/package.json`:
 
 ```json
-{ "dependencies": { "@brooswit/rinth": "github:brooswit-minecraft/rinth#v0.8.0" } }
+{ "dependencies": { "@brooswit/rinth": "github:brooswit-minecraft/rinth#v0.9.1" } }
 ```
 
 PATH persistence needed the same fish fix (`fish_user_paths` was empty on
@@ -170,6 +233,15 @@ EXIT=0
 $ env -i HOME="$HOME" TERM=xterm /usr/bin/fish -l -c 'rinth whoami; echo "EXIT_STATUS=$status"'
 MODRINTH_TOKEN is not set. Set it with: export MODRINTH_TOKEN=<your Modrinth API token>
 EXIT_STATUS=3
+```
+
+And the same version-distinguishing check:
+
+```
+$ env -i HOME="$HOME" TERM=xterm /usr/bin/fish -l -c 'rinth versions'
+Usage: rinth versions <list|latest|delete> <project|version_id> [--loader <l>]
+[--game-version <gv>] [--channel release|beta|alpha] [--version-number <v>]
+[--limit <n>] [latest only: --wait <seconds> [--wait-interval <seconds>]]
 ```
 
 No `MODRINTH_TOKEN` is set on this box either (`env | grep -i MODRINTH`
@@ -214,6 +286,40 @@ Dial(...): dial tcp 100.99.162.116:22: connect: connection refused
 No task agent running on `servyboi` can bridge that gap — there is no
 `sshd` on the other box to reach — which is exactly why this install had to
 be performed by a session already running there.
+
+## Releasing
+
+**The README's install literals are bumped IN the release PR, naming the
+version that PR is about to become.** A version literal is only correct at
+its own tag if it names that tag — and a tag's README is immutable, so a
+"repin main afterwards" fix cannot reach the reader who pinned a tag and
+read the docs there, which is exactly the behaviour the install contract
+above asks for.
+
+This was learned the hard way: `v0.8.0`'s README told readers to install
+`v0.5.0`, and `v0.9.0`'s tells them to install `v0.8.0`. Repinning `main`
+after tagging fixes the repo front page and abandons the careful reader.
+
+One PR, in this order:
+
+1. Bump `version` in `package.json`.
+2. Add the matching `## [x.y.z]` heading to `CHANGELOG.md` (CI enforces this
+   — see "Changelog / version gate").
+3. Repin **every install literal in this README** to `#vx.y.z` — the version
+   this PR is about to become, not the one currently released. `grep -n
+   'rinth#v' README.md` finds them.
+4. Merge.
+5. Tag the merge commit `vx.y.z` and push the tag.
+
+**Never re-point a published tag.** This README's install contract promises
+that a pinned tag cannot change under a consumer; moving one would break
+precisely the guarantee this tool exists to keep. A published tag with
+stale embedded docs is fixed by cutting the next patch release, never by
+re-cutting the old one.
+
+Historical transcripts and incident write-ups elsewhere in this file keep
+the version they actually happened at — step 3 covers install
+*instructions*, not the record of what once occurred.
 
 ## Authentication
 

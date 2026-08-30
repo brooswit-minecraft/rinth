@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/). CI
 enforces that this file has a `## [<version>]` heading matching the
 `version` field in `package.json` — see README.md.
 
+## [0.9.1] - 2026-08-30
+
+Docs-only patch. `v0.9.0` is functionally correct — `versions
+latest|list --version-number` and the `servers` 404/403 diagnosis are both
+in it — but its embedded README tells readers to install `v0.8.0`, because
+the install literals were bumped after tagging rather than in the release
+commit. A tag's README is immutable, so repinning `main` fixes the repo
+front page and cannot reach the reader who pinned a tag and read the docs
+there. That reader is the one following this project's own install
+contract.
+
+`v0.9.0` is NOT re-cut. Re-pointing a published tag would break the exact
+guarantee the install contract makes — that a pinned tag cannot change
+under a consumer — in the repo whose selling point is not lying to callers.
+Consumers already on `v0.9.0` are unaffected and can move at their
+convenience.
+
+### Fixed
+
+- The README's install literals now pin `v0.9.1` — the version this release
+  IS — so the tagged commit's own documentation is self-consistent for the
+  first time in this repo's history.
+
+### Documentation
+
+- New **"Releasing"** section recording the procedure that prevents a
+  recurrence: bump `package.json`, add the CHANGELOG heading, repin the
+  README's install literals to the version the PR is about to become, merge,
+  then tag the merge commit — all in one PR. Plus the standing policy that a
+  published tag is never re-pointed.
+- The **fleet install** section records both installed accounts and
+  documents a silent-upgrade trap found while re-pinning them: `bun install
+  -g` over an existing pin of the same package appends a duplicate key to
+  the global manifest rather than replacing it, leaving the OLD version
+  resolved while reporting success and naming the new commit. `bun remove
+  -g` first.
+- The same section records that `rinth --help` and the exit-3 auth check
+  **cannot distinguish two releases** — they pass identically — so proving a
+  re-pin requires a version-distinguishing flag check plus the manifest and
+  the on-disk `version`. Two independent false negatives hit while verifying
+  that check are documented so they are not repeated: `rinth versions`
+  writes its usage to stderr, and the flag renders as `[--version-number
+  <v>]`.
+
 ## [0.9.0] - 2026-08-30
 
 Four deferred fixes held back from three otherwise-approved PRs, the epic's
