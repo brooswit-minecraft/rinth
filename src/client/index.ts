@@ -105,6 +105,55 @@ export interface CreateVersionFile {
   data: Uint8Array;
 }
 
+/**
+ * `project_type` accepted by labrinth v2's `POST /project` — confirmed from
+ * the OpenAPI spec at docs.modrinth.com ("Create a project"); NOT exercised
+ * live (no MODRINTH_TOKEN in the agent environment — see PR body). The
+ * create-time enum is only `mod`/`modpack`, narrower than
+ * `Labrinth.Projects.v2.ProjectType` (which also covers
+ * `resourcepack`/`shader`/`plugin`/`datapack`/`project` as *derived* display
+ * types, not creatable top-level types) — see `rinth project create` in the
+ * README and the PR body for the source.
+ */
+export type CreateProjectType = "mod" | "modpack";
+
+/** `client_side`/`server_side` accepted by labrinth v2's `POST /project` (same three values as `rinth publish`'s environment fields; the fourth `Environment` value, `unknown`, is server-assigned and never a valid create-time input). */
+export type CreateProjectEnvironment = "required" | "optional" | "unsupported";
+
+/**
+ * The JSON `data` part of labrinth's `POST /project` (v2) multipart body —
+ * see `rinth project create`. `is_draft`/`initial_versions` are constants
+ * the CLI supplies itself (every project this route creates is a draft with
+ * no versions yet), not user-facing flags.
+ */
+export interface CreateProjectRequest {
+  title: string;
+  project_type: CreateProjectType;
+  slug: string;
+  description: string;
+  body: string;
+  categories: string[];
+  client_side: CreateProjectEnvironment;
+  server_side: CreateProjectEnvironment;
+  license_id: string;
+  is_draft: true;
+  initial_versions: [];
+  license_url?: string;
+  source_url?: string;
+  issues_url?: string;
+}
+
+/**
+ * Optional icon part for `POST /project`'s multipart body. Not wired to any
+ * CLI flag here — RINTH-4 owns `project icon` — but `buildCreateProjectFormData`
+ * accepts it so an icon part can be added later without restructuring the
+ * form-data builder.
+ */
+export interface CreateProjectIconFile {
+  name: string;
+  data: Uint8Array;
+}
+
 export interface Transport {
   /** GET labrinth `/user` (v2) — the authenticated user. */
   getCurrentUser(): Promise<Labrinth.Users.v2.User>;
@@ -130,6 +179,20 @@ export interface Transport {
   createVersion(data: CreateVersionRequest, file: CreateVersionFile): Promise<Labrinth.Versions.v2.Version>;
   /** GET labrinth `/version/{id}` (v2) — a single version, unmodified API shape. Used by `versions delete`'s read-back verification. */
   getVersion(id: string): Promise<Labrinth.Versions.v2.Version>;
+  /** POST labrinth `/project` (v2), multipart — creates a DRAFT project. See `src/client/real.ts` for why this bypasses the API client's own upload path, same as `createVersion`. */
+  createProject(data: CreateProjectRequest, icon?: CreateProjectIconFile): Promise<Labrinth.Projects.v2.Project>;
+  /**
+   * PATCH labrinth `/project/{idOrSlug}` (v2) — a general, sparse partial-body
+   * update, shared by `project submit` (this task) and `project edit`
+   * (RINTH-4): signature fixed by epic arbitration (RINTH-1), not open to
+   * either story to widen. `patch` is sent exactly as given, with no
+   * defaults filled in. Deliberately resolves `void`, not the updated
+   * project — the live API's own write response is never trustworthy on its
+   * own (see `versions delete`'s 404-on-success quirk), so every caller MUST
+   * read the resource back to learn what actually happened, rather than
+   * being handed a response this method could tempt them to trust instead.
+   */
+  updateProject(idOrSlug: string, patch: Record<string, unknown>): Promise<void>;
   /** DELETE labrinth `/version/{id}` (v2). The live API returns 404 even when the delete succeeds — see `versions delete` in `src/commands/versions.ts`, which never trusts this call's status code on its own and always reads the version back afterward. */
   deleteVersion(id: string): Promise<void>;
 }

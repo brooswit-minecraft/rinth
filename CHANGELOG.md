@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/). CI
 enforces that this file has a `## [<version>]` heading matching the
 `version` field in `package.json` — see README.md.
 
+## [0.7.0] - 2026-08-30
+
+Driven by the same hand-`curl`ing of Modrinth on 2026-08-29 that produced
+0.6.0: `project create` and `project submit` take the two operations that
+move a project through its lifecycle — coming into existence as a DRAFT, and
+moving into review — out of hand-typed curl.
+
+### Added
+
+- `rinth project create --slug <slug> --title <title> --description <text>
+  (--body <text> | --body-file <path>) --project-type mod|modpack
+  --client-side required|optional|unsupported --server-side
+  required|optional|unsupported --license <license_id> [--category <c>]...
+  [--license-url <url>] [--source-url <url>] [--issues-url <url>]
+  [--dry-run]` (`src/commands/project.ts`): labrinth v2 `POST /project`
+  (multipart; an optional icon part is never sent here — `project icon`
+  owns that). Every project created is born a `draft` (`is_draft: true`,
+  `initial_versions: []`, both constants the command supplies). The
+  required-flag set is a CLI-level decision layered on a verified fact, not
+  a claim about the API's own strictness: the OpenAPI spec at
+  docs.modrinth.com names only `project_type` as schema-required for this
+  endpoint, but the CLI additionally requires `slug`/`title`/`description`/
+  `body`(-file)/`project_type`/`client_side`/`server_side`/`license` so it
+  can't produce a technically-valid but useless draft — each missing flag
+  is a usage error (exit 2) naming that flag. `--project-type` accepts only
+  `mod`/`modpack` (confirmed from the same spec — narrower than the
+  ticket's own guess, which conflated the create-time enum with
+  `Labrinth.Projects.v2.ProjectType`'s broader *derived display* values).
+  `--dry-run` prints the exact payload, sends nothing, and needs no
+  `MODRINTH_TOKEN` (the branch never reads `ctx.transport`, matching
+  `publish --dry-run`'s contract). **None of this has been exercised
+  against the live API** — confirmed from the OpenAPI spec and the vendored
+  `@modrinth/api-client` source only; there is no `MODRINTH_TOKEN` in the
+  agent environment. See README "`rinth project create`" and "Known gaps /
+  follow-ups".
+- `rinth project submit <idOrSlug>` (`src/commands/project.ts`): moves a
+  project out of `draft` via labrinth v2 `PATCH /project/{idOrSlug}`,
+  following the read-first / refuse-by-name / write / read-back discipline
+  `versions delete` and `servers upstream` established — never reports
+  success on the write's own result, and a read-back showing no status
+  change is reported as a failure (exit 5, `ApiError`, reason
+  `"submit_unverified"`). Only `draft` is treated as submittable; a
+  non-submittable state is refused (exit 5, reason `"not_submittable"`)
+  naming the actual status. The PATCH body is `{ "requested_status":
+  "approved" }`, not `{ "status": "processing" }` — confirmed from the
+  OpenAPI spec that `requested_status`'s enum excludes `processing`
+  entirely, so a normal token requests the post-review status it wants and
+  Modrinth's moderation pipeline is what flips `status`. Whether a
+  `rejected` project is also resubmittable, and whether labrinth refuses
+  submitting a project with no versions, could not be settled from spec or
+  vendored source alone (no live token) — both are documented as
+  UNSETTLED, not guessed at; see README "`rinth project submit`" and
+  "Known gaps / follow-ups".
+- `Transport#createProject`/`Transport#updateProject`
+  (`src/client/index.ts`/`real.ts`/`fake.ts`), plus `CreateProjectRequest`/
+  `CreateProjectType`/`CreateProjectEnvironment`/`CreateProjectIconFile`
+  types. `createProject` follows `createVersion`'s raw-`fetch` pattern (the
+  API client's own upload support still throws under Bun — see `rinth
+  publish`'s "Upload path" note). `updateProject(idOrSlug, patch: Record<string,
+  unknown>): Promise<void>` is a general, sparse PATCH method — its exact
+  signature was arbitrated at the epic level (RINTH-1) since RINTH-4's
+  `project edit` needs the identical shape — and is deliberately
+  void-returning so no caller can be tempted to trust a write's own
+  response instead of reading the resource back. Implemented via
+  `client.labrinth.projects_v2.edit()`, a typed PATCH method confirmed by
+  reading the vendored package's compiled source.
+- `test/integration/project-create.integration.test.ts`: gated on
+  `MODRINTH_TOKEN` **and** a new `RINTH_TEST_CREATE_PROJECT` opt-in (this
+  test creates a real project) — skips cleanly, logging why, when either is
+  unset; if it runs, it creates a real throwaway draft and deletes it
+  afterward via a direct `client.labrinth.projects_v2.delete()` call.
+  `test/integration/project-submit.integration.test.ts`: gated on
+  `MODRINTH_TOKEN` only, exercises `submit`'s refusal path live against a
+  real approved project (`sodium`) without ever attempting a write.
+  `submit`'s success path (draft -> processing) is deliberately not
+  exercised live by any test in this suite — see README "Known gaps /
+  follow-ups" for why.
+
 ## [0.6.0] - 2026-08-30
 
 Driven by hand-`curl`ing Modrinth on 2026-08-29 and hitting two places

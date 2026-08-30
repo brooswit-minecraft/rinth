@@ -9,6 +9,8 @@ import { CliError, type CliErrorOptions, type ExitCode } from "../errors.ts";
 import type { Archon, Labrinth } from "@modrinth/api-client";
 import type {
   ConsoleSocket,
+  CreateProjectIconFile,
+  CreateProjectRequest,
   CreateVersionFile,
   CreateVersionRequest,
   PowerAction,
@@ -38,10 +40,24 @@ export interface FakeTransportFixtures {
   versionsError?: CliError;
   /** Called synchronously with the exact args `listVersions` received, so tests can assert filter pass-through. */
   onListVersions?: (project: string, filters: VersionFilters | undefined) => void;
-  project?: Labrinth.Projects.v2.Project;
+  /**
+   * `getProject`'s result. A function lets tests change the answer across
+   * calls (e.g. `project submit`'s read-then-read-back: draft, then
+   * processing), a bare value is a fixed answer for every call — same
+   * pattern as `version`/`versionError` below.
+   */
+  project?: Labrinth.Projects.v2.Project | (() => Labrinth.Projects.v2.Project);
   projectError?: CliError;
   /** Called synchronously with the exact arg `getProject` received. */
   onGetProject?: (idOrSlug: string) => void;
+  createdProject?: Labrinth.Projects.v2.Project;
+  createProjectError?: CliError;
+  /** Called synchronously with the exact args `createProject` received. */
+  onCreateProject?: (data: CreateProjectRequest, icon: CreateProjectIconFile | undefined) => void;
+  /** `updateProject`'s error, if it should throw. Omit for a bare success (resolves with no error) — `updateProject` is void-returning, see src/client/index.ts. */
+  updateProjectError?: CliError;
+  /** Called synchronously with the exact args `updateProject` received. */
+  onUpdateProject?: (idOrSlug: string, patch: Record<string, unknown>) => void;
   createdVersion?: Labrinth.Versions.v2.Version;
   createVersionError?: CliError;
   /** Called synchronously with the exact args `createVersion` received, so tests can assert the upload was (or wasn't) attempted, e.g. on the duplicate-version and --dry-run paths. */
@@ -142,7 +158,7 @@ export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Trans
       if (!fixtures.project) {
         throw new Error("createFakeTransport: no `project` fixture provided");
       }
-      return fixtures.project;
+      return typeof fixtures.project === "function" ? fixtures.project() : fixtures.project;
     },
 
     async createVersion(data, file) {
@@ -173,6 +189,24 @@ export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Trans
         throw typeof fixtures.deleteVersionError === "function"
           ? fixtures.deleteVersionError()
           : fixtures.deleteVersionError;
+      }
+    },
+
+    async createProject(data, icon) {
+      fixtures.onCreateProject?.(data, icon);
+      if (fixtures.createProjectError) {
+        throw fixtures.createProjectError;
+      }
+      if (!fixtures.createdProject) {
+        throw new Error("createFakeTransport: no `createdProject` fixture provided");
+      }
+      return fixtures.createdProject;
+    },
+
+    async updateProject(idOrSlug, patch) {
+      fixtures.onUpdateProject?.(idOrSlug, patch);
+      if (fixtures.updateProjectError) {
+        throw fixtures.updateProjectError;
       }
     },
   };

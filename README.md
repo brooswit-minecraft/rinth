@@ -4,10 +4,10 @@ A Modrinth CLI (servers management + publish) wrapping [`@modrinth/api-client`](
 One tested surface usable both by a human at a shell and by CI — there is no
 official Modrinth CLI.
 
-Status: v0.6.0. Full command surface: `whoami`; `servers
+Status: v0.7.0. Full command surface: `whoami`; `servers
 list|get|power|upstream|exec`; `versions list|latest|delete`; `publish`;
-`project get`. See "Known gaps / follow-ups" below for what still doesn't
-work against the live API.
+`project get|create|submit`. See "Known gaps / follow-ups" below for what
+still doesn't work against the live API.
 
 ## Install / run
 
@@ -341,6 +341,219 @@ My Draft Modpack (AbCdEfGh)
 ```json
 { "id": "AbCdEfGh", "slug": "my-draft-modpack", "status": "draft", "...": "..." }
 ```
+
+### `rinth project create`
+
+```
+rinth project create --slug <slug> --title <title> --description <text>
+  (--body <text> | --body-file <path>) --project-type mod|modpack
+  --client-side required|optional|unsupported --server-side required|optional|unsupported
+  --license <license_id> [--category <c>]... [--license-url <url>]
+  [--source-url <url>] [--issues-url <url>] [--dry-run]
+```
+
+`POST https://api.modrinth.com/v2/project` (multipart: a JSON `data` part
+plus an OPTIONAL icon part this command never sends — `project icon`, a
+separate command, owns icon upload). Every project created this way is born
+a **DRAFT**: `is_draft: true` and `initial_versions: []` are constants this
+command supplies itself, not user-facing flags.
+
+**Required-field verification, and why the enforced set is broader than the
+schema's own**: confirmed from the OpenAPI spec at docs.modrinth.com ("Create
+a project") — **not exercised live, no `MODRINTH_TOKEN` in the agent
+environment**. The spec's own `required` array for this endpoint's `data`
+schema names only `project_type`; every other field, including `slug` and
+`title`, is schema-optional. Enforcing only that would let `rinth project
+create` produce a technically valid but useless draft (no title, no slug, no
+license) and defer the real problem to an opaque API error later. So this
+command requires, as a CLI-level product decision layered on top of the
+verified schema fact (not a claim that the API itself rejects the narrower
+set): `--slug`, `--title`, `--description`, `--body`/`--body-file`,
+`--project-type`, `--client-side`, `--server-side`, `--license`. Each
+missing required flag is a usage error (exit 2) naming that flag, e.g.:
+
+```
+Usage: --title is required
+```
+
+`--category` is repeatable and optional, defaulting to `[]`. `--license-url`,
+`--source-url`, `--issues-url` are optional.
+
+**`--project-type` accepts only `mod` or `modpack`** — also confirmed from
+the same OpenAPI spec. This is narrower than it might look: labrinth's v2
+`Project.project_type` response field can show `resourcepack`/`shader`/
+`plugin`/`datapack`/`project`, but those are *derived display types* (from a
+project's loaders/categories), not values `POST /project` accepts as input.
+An invalid value is a usage error (exit 2) naming the two accepted values,
+the same pattern `rinth publish`'s `--channel` uses. `--client-side`/
+`--server-side` are validated the same way against `required`/`optional`/
+`unsupported`.
+
+`--body`/`--body-file` are mutually exclusive (exit 2 if both are given, exit
+2 with a clear message if `--body-file` doesn't exist) — identical discipline
+to `rinth publish`'s `--changelog`/`--changelog-file`.
+
+```sh
+rinth project create --slug my-draft-mod --title "My Draft Mod" \
+  --description "A short summary" --body-file README.md \
+  --project-type mod --category technology \
+  --client-side required --server-side unsupported --license MIT
+```
+
+**Human output** — the created project's id, slug, and Modrinth URL:
+
+```
+AbCdEfGh  my-draft-mod  https://modrinth.com/project/my-draft-mod
+```
+
+**`--json`** — the created project object, unmodified API shape (same
+discipline as `rinth publish`'s `--json`).
+
+**`--dry-run`** prints the exact `{ "data": ... }` payload that would be
+sent, exits 0, and sends nothing — **without requiring `MODRINTH_TOKEN`**,
+matching `rinth publish --dry-run`'s contract. Unlike `publish --dry-run`
+(which can't resolve a project identifier without a network call), there is
+nothing left unresolved here: every field comes straight from the flags/
+files already read, so the printed payload is exactly what would be sent.
+This works because the `--dry-run` branch returns before ever reading
+`ctx.transport` — see `src/cli.ts`'s lazy transport construction.
+
+```sh
+$ rinth project create --slug my-draft-mod --title "My Draft Mod" \
+    --description "A short summary" --body "Long description" \
+    --project-type mod --client-side required --server-side unsupported \
+    --license MIT --dry-run
+{
+  "data": {
+    "title": "My Draft Mod",
+    "project_type": "mod",
+    "slug": "my-draft-mod",
+    "description": "A short summary",
+    "body": "Long description",
+    "categories": [],
+    "client_side": "required",
+    "server_side": "unsupported",
+    "license_id": "MIT",
+    "is_draft": true,
+    "initial_versions": []
+  }
+}
+```
+
+**Icon upload**: an icon part is optional on this route and this command
+never sends one — `rinth project icon` (a separate command) owns icon
+upload. The multipart body builder (`buildCreateProjectFormData` in
+`src/client/real.ts`) already accepts an optional icon file so a future
+caller can add one without restructuring it.
+
+**Upload path**: like `rinth publish`, this can't go through
+`@modrinth/api-client`'s own upload support under Bun (`XMLHttpRequest is
+not defined` — see "Upload path" under `rinth publish` below for the full
+account), so `Transport#createProject` uses a single raw `fetch`, same
+Bearer/User-Agent/`X-Panel-Version` headers, still mapped through
+`toCliError()`.
+
+**Integration test**: `test/integration/project-create.integration.test.ts`
+is gated on `MODRINTH_TOKEN` **and** `RINTH_TEST_CREATE_PROJECT` (a second,
+explicit opt-in — this test creates a real project, unlike a read) and skips
+cleanly, logging why, when either is unset. If it runs, it creates a real
+throwaway draft project and deletes it afterward via
+`client.labrinth.projects_v2.delete()` directly (`Transport` deliberately has
+no `deleteProject` method, since no rinth command needs one — same pattern as
+`publish.integration.test.ts`'s version cleanup).
+
+### `rinth project submit <idOrSlug>`
+
+Moves a project out of `draft` via `PATCH https://api.modrinth.com/v2/project/{idOrSlug}`.
+The discipline, non-negotiable: **read first**, refuse a non-submittable
+state **by name**, PATCH, **read the project back**, and report the
+*resulting* status — never the write's own success. A read-back showing no
+status change is reported as a **failure**, not a success. This is the exact
+pattern `rinth versions delete` and `rinth servers upstream` already
+establish (see their sections above) — a live API response is never trusted
+on its own when it claims to have changed something.
+
+```sh
+rinth project submit my-draft-mod
+```
+
+**Submittable statuses**: only `draft`. Whether a `rejected` project can be
+resubmitted this same way could not be settled from spec/source alone (no
+`MODRINTH_TOKEN` in the agent environment) — this is **unsettled, not a
+guess**, so the conservative choice (excluding it) is what's implemented.
+Submitting anything other than a `draft` project is refused with a
+non-zero exit (5, `ApiError`) naming the actual state:
+
+```
+Project my-draft-mod is not submittable: its status is currently 'processing'. Only a 'draft' project can be submitted for review.
+```
+
+**Why the PATCH body is `{ "requested_status": "approved" }`, not `{
+"status": "processing" }`**: confirmed from the OpenAPI spec at
+docs.modrinth.com's "Modify a project" — **not exercised live**. The PATCH
+schema's `requested_status` enum is `approved|archived|unlisted|private|draft`
+— **`processing` is not a valid `requested_status` value**, so a direct "set
+status to processing" PATCH isn't how this works. Instead, a normal user
+requests the status they want *after* review (`approved`), and Modrinth's
+moderation pipeline is what actually flips `status` to `processing`; `status`
+itself is moderator-controlled and not something a normal token can set
+directly. Because this is confirmed from spec/source only, the read-back
+never hard-asserts the resulting status equals `"processing"` — it only
+requires that `status` actually changed from what it was before the PATCH,
+and reports whatever it became.
+
+**`--json`** on success:
+
+```json
+{ "id": "AbCdEfGh", "slug": "my-draft-mod", "status": "processing" }
+```
+
+Human mode prints one line naming the before/after status:
+
+```
+Submitted my-draft-mod for review: draft -> processing.
+```
+
+On failure, the standard `--json` error shape (see "Errors under `--json`"
+below); the not-submittable and read-back-unverified failures carry
+`reason: "not_submittable"` and `reason: "submit_unverified"` respectively.
+
+**PATCH route used**: `client.labrinth.projects_v2.edit(idOrSlug, patch)` —
+confirmed (by reading `node_modules/@modrinth/api-client/dist/index.js`) to
+be a typed method that calls `client.request()` with `method: "PATCH"`, so
+this goes through the same `call()`/`toCliError()` pipeline as `getProject`
+rather than a raw `fetch`. `Transport#updateProject(idOrSlug, patch:
+Record<string, unknown>): Promise<void>` is a general, sparse-patch method —
+shared with `rinth project edit` — that resolves `void`, never the updated
+project: the live API's own write response is never trustworthy on its own
+(see `rinth versions delete`'s 404-on-success quirk), so every caller must
+read the resource back to learn what actually happened.
+
+**Believed live-API hazard, left unenforced**: labrinth is believed to
+refuse submitting a project with no versions. This could not be settled from
+spec or source alone (no `MODRINTH_TOKEN` in the agent environment to
+observe it), so it is **documented as unsettled, not invented as behavior**
+— `rinth project submit` does not pre-emptively block a version-less
+project; if the live API does refuse it, the API's own error message (which
+`toCliError()` already surfaces, not a bare status code) reaches the caller
+as-is. See "Known gaps / follow-ups" below.
+
+**Draft visibility**: like `rinth project get`, both `create`'s implicit
+read-back-free write and `submit`'s read/read-back go through the
+authenticated path (`Transport#getProject` always sends the Bearer token),
+so a draft the token's identity owns resolves correctly; a residual 404 on
+either read is routed through `diagnoseNotFound` (see "404 diagnosis"
+below) — never a bare "not found".
+
+**Integration test**: `test/integration/project-submit.integration.test.ts`
+is gated on `MODRINTH_TOKEN` only and exercises the **refusal path** live,
+against a real, public, already-`approved` project (`sodium`) — it asserts
+`submit` refuses by name and never attempts a write, so nothing is at risk
+and nothing needs cleanup. The **success path** (draft -> processing) is
+deliberately not exercised live anywhere in this suite: submitting a real
+project enters Modrinth's human moderation queue, a side effect on a third
+party that — unlike a throwaway draft or version — a delete-afterward
+pattern cannot undo. See "Known gaps / follow-ups".
 
 ### `rinth versions list`
 
@@ -692,6 +905,32 @@ into a real pipeline yet.
   design, not a rinth limitation to fix: see "404 diagnosis" above, which
   states this honestly as one outcome with multiple candidate causes rather
   than guessing which one applies.
+- **`project create`'s required-field set, `project_type` enum, and
+  `project submit`'s `requested_status`/`processing` mechanism are confirmed
+  from the OpenAPI spec at docs.modrinth.com and the vendored
+  `@modrinth/api-client` source only — none of this has been exercised
+  against the live API.** There is no `MODRINTH_TOKEN` in this agent
+  environment. See the "`rinth project create`"/"`rinth project submit`"
+  sections above for exactly what was confirmed and from where.
+- **Whether a `rejected` project can be resubmitted via `project submit` is
+  unsettled** — could not be determined from spec or vendored source alone,
+  and was not guessed at. `project submit` conservatively treats only
+  `draft` as submittable; a `rejected` project is refused by name like any
+  other non-submittable state, pending confirmation one way or the other.
+- **Whether labrinth refuses `project submit` on a project with no versions
+  is unsettled** — believed real (per the ticket that produced this
+  command), but could not be confirmed from spec/source, and no
+  `MODRINTH_TOKEN` was available to observe it live. `project submit` does
+  not pre-emptively invent a client-side block for this: if the live API
+  does refuse it, its own error message reaches the caller via the normal
+  error path, not a bare status code.
+- **`project submit`'s success path (draft -> processing) has never been
+  exercised against the live API, and never will be by this test suite as
+  currently designed** — unlike `publish`/`versions delete`/`project
+  create`'s throwaway-and-delete integration tests, a real submission enters
+  Modrinth's human moderation queue, a side effect on a third party that
+  cannot be undone by deleting something afterward. Only the refusal path
+  (which never PATCHes) is exercised live, against a real approved project.
 
 ## Exit codes
 

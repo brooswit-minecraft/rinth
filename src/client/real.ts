@@ -43,6 +43,8 @@ import { requireToken } from "../auth.ts";
 import { CliError, ExitCode, exitCodeForApiError } from "../errors.ts";
 import type {
   ConsoleSocket,
+  CreateProjectIconFile,
+  CreateProjectRequest,
   CreateVersionFile,
   CreateVersionRequest,
   PowerAction,
@@ -123,6 +125,51 @@ async function createVersionRaw(
   }
 
   return (await response.json()) as Labrinth.Versions.v2.Version;
+}
+
+/**
+ * Exported for unit testing offline — builds the multipart body labrinth's
+ * `POST /project` (v2) expects: a JSON `data` part plus an OPTIONAL `icon`
+ * part. `icon` is unused by any CLI flag today — RINTH-4 owns `project
+ * icon` — this parameter exists so an icon part can be added later without
+ * restructuring this function.
+ */
+export function buildCreateProjectFormData(data: CreateProjectRequest, icon?: CreateProjectIconFile): FormData {
+  const formData = new FormData();
+  formData.append("data", JSON.stringify(data));
+  if (icon) {
+    formData.append("icon", new Blob([icon.data]), icon.name);
+  }
+  return formData;
+}
+
+async function createProjectRaw(
+  token: string,
+  data: CreateProjectRequest,
+  icon?: CreateProjectIconFile,
+): Promise<Labrinth.Projects.v2.Project> {
+  const response = await fetch(`${LABRINTH_BASE_URL}/v2/project`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": USER_AGENT,
+      "X-Panel-Version": "1",
+    },
+    body: buildCreateProjectFormData(data, icon),
+  });
+
+  if (!response.ok) {
+    const responseData: unknown = await response.json().catch(() => undefined);
+    const description =
+      responseData && typeof responseData === "object" && "description" in responseData
+        ? (responseData as { description?: unknown }).description
+        : undefined;
+    const message =
+      typeof description === "string" ? description : `Project creation failed with status ${response.status}`;
+    throw new ModrinthApiError(message, { statusCode: response.status, responseData });
+  }
+
+  return (await response.json()) as Labrinth.Projects.v2.Project;
 }
 
 /** Exported for unit testing offline — the field trim that keeps server credentials out of output. */
@@ -280,5 +327,26 @@ export function createRealTransport(): Transport {
     // via a read-back, not this transport method.
     deleteVersion: (id: string) =>
       call(() => client.labrinth.versions_v2.deleteVersion(id), `DELETE /v2/version/${encodeURIComponent(id)}`),
+
+    createProject: (data: CreateProjectRequest, icon?: CreateProjectIconFile) =>
+      call(() => createProjectRaw(token, data, icon), "POST /v2/project"),
+
+    // `client.labrinth.projects_v2.edit()` IS a typed PATCH method (confirmed
+    // by reading node_modules/@modrinth/api-client/dist/index.js: it calls
+    // `client.request(`/project/${id}`, {api:"labrinth", version:2,
+    // method:"PATCH", body:t})`), so this goes through the same
+    // call()/toCliError() pipeline as getProject rather than a raw fetch.
+    // Its own resolved value (void) is never surfaced — Transport#updateProject
+    // is deliberately void-returning; see src/client/index.ts.
+    updateProject: (idOrSlug: string, patch: Record<string, unknown>) =>
+      call(
+        // `edit()`'s declared param type (`Partial<Project>`) is the response
+        // shape, not a request schema — it only ever JSON.stringifies `patch`
+        // and PATCHes it, so a cast here is a type-system technicality, not a
+        // runtime behavior change. `Transport#updateProject`'s own signature
+        // (`Record<string, unknown>`) is what's contractually fixed.
+        () => client.labrinth.projects_v2.edit(idOrSlug, patch as Partial<Labrinth.Projects.v2.Project>),
+        `PATCH /v2/project/${encodeURIComponent(idOrSlug)}`,
+      ),
   };
 }
