@@ -38,10 +38,23 @@ export interface FakeTransportFixtures {
   versionsError?: CliError;
   /** Called synchronously with the exact args `listVersions` received, so tests can assert filter pass-through. */
   onListVersions?: (project: string, filters: VersionFilters | undefined) => void;
-  project?: Labrinth.Projects.v2.Project;
+  /**
+   * A function lets a test return a DIFFERENT project across successive
+   * `getProject` calls — e.g. `project edit`/`project icon`'s read-back
+   * verification, which needs the "before" and "after" reads to differ (or
+   * deliberately not differ, to test the unchanged-field failure). A bare
+   * value is a fixed answer for every call, same as `version` below.
+   */
+  project?: Labrinth.Projects.v2.Project | (() => Labrinth.Projects.v2.Project);
   projectError?: CliError;
   /** Called synchronously with the exact arg `getProject` received. */
   onGetProject?: (idOrSlug: string) => void;
+  updateProjectError?: CliError;
+  /** Called synchronously with the exact args `updateProject` received — how tests prove the sparse-PATCH body. */
+  onUpdateProject?: (idOrSlug: string, patch: Record<string, unknown>) => void;
+  uploadProjectIconError?: CliError;
+  /** Called synchronously with the exact args `uploadProjectIcon` received. */
+  onUploadProjectIcon?: (idOrSlug: string, ext: string, bytes: Uint8Array) => void;
   createdVersion?: Labrinth.Versions.v2.Version;
   createVersionError?: CliError;
   /** Called synchronously with the exact args `createVersion` received, so tests can assert the upload was (or wasn't) attempted, e.g. on the duplicate-version and --dry-run paths. */
@@ -142,7 +155,21 @@ export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Trans
       if (!fixtures.project) {
         throw new Error("createFakeTransport: no `project` fixture provided");
       }
-      return fixtures.project;
+      return typeof fixtures.project === "function" ? fixtures.project() : fixtures.project;
+    },
+
+    async updateProject(idOrSlug, patch) {
+      fixtures.onUpdateProject?.(idOrSlug, patch);
+      if (fixtures.updateProjectError) {
+        throw fixtures.updateProjectError;
+      }
+    },
+
+    async uploadProjectIcon(idOrSlug, ext, bytes) {
+      fixtures.onUploadProjectIcon?.(idOrSlug, ext, bytes);
+      if (fixtures.uploadProjectIconError) {
+        throw fixtures.uploadProjectIconError;
+      }
     },
 
     async createVersion(data, file) {

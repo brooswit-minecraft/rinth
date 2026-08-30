@@ -4,10 +4,10 @@ A Modrinth CLI (servers management + publish) wrapping [`@modrinth/api-client`](
 One tested surface usable both by a human at a shell and by CI — there is no
 official Modrinth CLI.
 
-Status: v0.6.0. Full command surface: `whoami`; `servers
+Status: v0.7.0. Full command surface: `whoami`; `servers
 list|get|power|upstream|exec`; `versions list|latest|delete`; `publish`;
-`project get`. See "Known gaps / follow-ups" below for what still doesn't
-work against the live API.
+`project get|edit|icon`. See "Known gaps / follow-ups" below for what still
+doesn't work against the live API.
 
 ## Install / run
 
@@ -341,6 +341,155 @@ My Draft Modpack (AbCdEfGh)
 ```json
 { "id": "AbCdEfGh", "slug": "my-draft-modpack", "status": "draft", "...": "..." }
 ```
+
+### `rinth project edit <idOrSlug>`
+
+```
+rinth project edit <idOrSlug>
+  [--description <text>] [--body <text> | --body-file <path>]
+  [--client-side required|optional|unsupported]
+  [--server-side required|optional|unsupported]
+  [--source-url <url>] [--issues-url <url>]
+  [--license <id>] [--license-url <url>]
+  [--category <c>]...
+```
+
+A **SPARSE** `PATCH https://api.modrinth.com/v2/project/{idOrSlug}`: sends
+only the fields you actually pass, and never anything else. This command
+never reads the project first to build a full object and PATCH that — doing
+so would silently clobber every field you didn't mention, which is the
+worst possible failure mode for an "edit" command. Passing **no** editable
+flag is a usage error (exit 2), not a no-op PATCH.
+
+`--body`/`--body-file` are mutually exclusive (exit 2 if both are given),
+matching `publish`'s `--changelog`/`--changelog-file`; a nonexistent
+`--body-file` is a usage error (exit 2).
+
+**⚠️ `--category` is repeatable and REPLACES the whole category list — it
+does not append.** `--category technology --category utility` sets the
+project's categories to exactly `["technology", "utility"]`, discarding
+whatever categories it had before. If you only mean to add one category to
+an existing list, you must pass every category you want to keep, every
+time. There is no `--add-category`/`--remove-category`.
+
+The live API's **write** shape differs from the shape `project get` reads
+back: license is two flat fields here (`license_id`, `license_url`), not
+the nested `license: {id, name, url}` object a read returns — confirmed
+against
+[docs.modrinth.com's "Modify a project"](https://docs.modrinth.com/api/operations/modifyproject/)
+(fetched directly). `--license`/`--license-url` map onto exactly those two
+write fields.
+
+```sh
+rinth project edit my-draft-modpack --description "A better one-liner" --category technology --category utility
+```
+
+**VERIFY BY READ-BACK.** After the `PATCH`, this reads the project back
+(`project get`'s same authenticated path) and never trusts the `PATCH`'s
+own status code. If a field you asked to change did NOT change in the
+read-back, that's a genuine failure — **exit 5 (`ApiError`)**, message in
+the same "X did not take effect" shape `versions delete` uses for its own
+read-back check, plus `reason: "update_not_landed"` under `--json`:
+
+```
+Update did not take effect: description is still "Old one-liner" (expected "A better one-liner").
+```
+
+`categories` is compared order-insensitively (it's a set from the
+operator's point of view; the API is not guaranteed to echo the same order
+back), every other field is compared exactly.
+
+**`--json`** on success prints the resulting project object, unmodified API
+shape (same as `project get --json`). Human mode prints only the fields
+that changed:
+
+```
+Updated project My Draft Modpack (AbCdEfGh). Changed fields:
+  description:  A better one-liner
+  categories:   technology, utility
+```
+
+Like every command here, this resolves a **DRAFT** project via the
+authenticated path (see "Authentication" above), and a residual 404 (either
+from the `PATCH` itself or from the read-back) is diagnosed rather than
+surfaced bare — see "404 diagnosis" below.
+
+### `rinth project icon <idOrSlug> --file <path>`
+
+```sh
+rinth project icon my-draft-modpack --file assets/icon.png
+```
+
+Uploads a project icon: `PATCH
+https://api.modrinth.com/v2/project/{idOrSlug}/icon?ext=<ext>` with the
+**raw image bytes** as the request body (not multipart). Confirmed against
+[docs.modrinth.com's "Change project icon"](https://docs.modrinth.com/api/operations/changeprojecticon/)
+(fetched directly, method/path/params/body-type all quoted from the live
+docs) — **not exercised against a live authenticated call**, since there is
+no `MODRINTH_TOKEN` in this development environment; see "Known gaps /
+follow-ups" below and the PR body for the full account of what was and
+wasn't confirmed.
+
+The extension is inferred from `--file`'s path (case-insensitive). Accepted
+extensions (and the `Content-Type` sent with each, also from the live
+docs):
+
+| Extension | Content-Type |
+| --------- | ------------ |
+| `png` | `image/png` |
+| `jpg`, `jpeg` | `image/jpeg` |
+| `bmp` | `image/bmp` |
+| `gif` | `image/gif` |
+| `webp` | `image/webp` |
+| `svg` | `image/svg` |
+| `svgz` | `image/svgz` |
+| `rgb` | `image/rgb` |
+
+An unsupported extension is a usage error (exit 2) naming every accepted
+extension; a missing or nonexistent `--file` is also a usage error (exit
+2), matching `publish --file`. The live docs cap the file size at 256KiB;
+this command does not pre-check that client-side — an oversized file
+surfaces as whatever error labrinth returns for it.
+
+**VERIFY BY READ-BACK.** Since there is no meaningful way to predict the
+new `icon_url` client-side, this reads the project back **both before and
+after** the upload and compares: a 2xx response that leaves `icon_url`
+unchanged is a genuine failure — **exit 5 (`ApiError`)**, `reason:
+"icon_not_landed"` under `--json`:
+
+```
+Icon upload did not take effect: icon_url is still "https://cdn.modrinth.com/data/AbCdEfGh/icon.png" after PATCH.
+```
+
+**`--json`** on success:
+
+```json
+{ "id": "AbCdEfGh", "icon_url": "https://cdn.modrinth.com/data/AbCdEfGh/9f8e7d6c.png" }
+```
+
+Human mode: `Updated icon for My Draft Modpack (AbCdEfGh): https://cdn.modrinth.com/data/AbCdEfGh/9f8e7d6c.png`.
+
+Resolves a **DRAFT** project via the authenticated path like every other
+command here; a 404 from the pre-flight read, the upload itself, or the
+read-back is diagnosed rather than surfaced bare.
+
+**Upload path** (see `src/client/real.ts` for the full account): the same
+reason `publish`'s `Transport#createVersion` uses a raw `fetch` applies
+here — `GenericModrinthClient extends XHRUploadClient`, whose `upload()`
+constructs a `new XMLHttpRequest()`, undefined under Bun. The vendored
+`@modrinth/api-client` 0.60.0 has no v2 icon method at all to fall back on
+(only a v3-only `projects_v3.changeIcon()`, which itself still routes
+through that same broken `upload()`), so `Transport#uploadProjectIcon` uses
+a single raw `fetch`: the same Bearer token, User-Agent, and
+`X-Panel-Version` header every other raw-fetch transport method in this
+file carries.
+
+**Integration test**: `test/integration/project-icon.integration.test.ts`
+is gated on `RINTH_TEST_PROJECT` on top of the usual `MODRINTH_TOKEN` gate
+(the same double-gate `publish`/`versions delete` use) and skips cleanly,
+logging why, when unset. If it runs, it uploads a throwaway 1x1 PNG and
+restores the project's original icon afterward (downloading the original
+bytes first, if it had one).
 
 ### `rinth versions list`
 
@@ -681,6 +830,14 @@ into a real pipeline yet.
 - **The `publish` success path has never been exercised against the live
   API** — `test/integration/publish.integration.test.ts` is gated on
   `RINTH_TEST_PROJECT`, which is deliberately left unset.
+- **`project icon`'s request shape has never been exercised against a live
+  authenticated call either** — confirmed from the published API docs and
+  cross-checked against the vendored `@modrinth/api-client` source (see
+  "`rinth project icon`" above and the PR body for exactly what was and
+  wasn't confirmed, and how); there is no `MODRINTH_TOKEN` in this
+  development environment. `test/integration/project-icon.integration.test.ts`
+  and `test/integration/project-edit.integration.test.ts` are both gated on
+  `RINTH_TEST_PROJECT` like `publish`'s, which is deliberately left unset.
 - **Public reads still require `MODRINTH_TOKEN`** — there is no tokenless
   mode, even for routes the Modrinth API itself doesn't require auth for.
 - **npm publish under `@brooswit` is deferred** — it needs the
@@ -773,8 +930,9 @@ for a non-HTTP failure, e.g. a usage error or a socket-level failure), the
 and (**new**) a machine-readable `reason` string (`null` when none applies)
 so a consumer can switch on a stable string instead of memorizing exit
 codes — e.g. `"auth"`, `"project_unreadable"`, `"no_version_match"`,
-`"wait_exhausted"`. `reason` is purely additive: every other field keeps its
-existing name and meaning.
+`"wait_exhausted"`, `"update_not_landed"` (`project edit`'s read-back
+verification), `"icon_not_landed"` (`project icon`'s). `reason` is purely
+additive: every other field keeps its existing name and meaning.
 
 - **Plain text** (`--json` not set): the stderr message includes status and
   endpoint when present, e.g.

@@ -863,5 +863,113 @@ describe("createRealTransport", () => {
       expect((caught as CliError).status).toBe(400);
       expect((caught as CliError).endpoint).toBe("POST /v2/version");
     });
+
+    test("updateProject sends a PATCH with the exact sparse body and the Bearer token, resolving on a 204 response", async () => {
+      let capturedUrl: string | undefined;
+      let capturedMethod: string | undefined;
+      let capturedHeaders: Headers | undefined;
+      let capturedBody: unknown;
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (url: string, init: RequestInit) => {
+        capturedUrl = String(url);
+        capturedMethod = init.method;
+        capturedHeaders = new Headers(init.headers);
+        capturedBody = init.body;
+        return new Response(null, { status: 204 });
+      }) as unknown as typeof fetch);
+
+      const transport = createRealTransport();
+      await expect(
+        transport.updateProject("sodium", { description: "New desc", categories: ["technology"] }),
+      ).resolves.toBeUndefined();
+      fetchSpy.mockRestore();
+
+      expect(capturedUrl).toBe("https://api.modrinth.com/v2/project/sodium");
+      expect(capturedMethod).toBe("PATCH");
+      expect(capturedHeaders?.get("authorization")).toBe("Bearer unit-test-real-transport-token");
+      expect(JSON.parse(String(capturedBody))).toEqual({ description: "New desc", categories: ["technology"] });
+    });
+
+    test("updateProject rejects with a CliError mapped from a 404 response, carrying the endpoint", async () => {
+      const fetchSpy = mockFetch(() => new Response(JSON.stringify({ error: "not found" }), { status: 404 }));
+
+      const transport = createRealTransport();
+      let caught: unknown;
+      try {
+        await transport.updateProject("does-not-exist", { description: "x" });
+      } catch (err) {
+        caught = err;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      const cliError = caught as CliError;
+      expect(cliError.exitCode).toBe(ExitCode.NotFound);
+      expect(cliError.status).toBe(404);
+      expect(cliError.endpoint).toBe("PATCH /v2/project/does-not-exist");
+    });
+
+    test("uploadProjectIcon PATCHes /project/{id}/icon?ext=<ext> with the raw bytes as the body, the Content-Type mapped from the extension, and the Bearer token, resolving on 204", async () => {
+      let capturedUrl: string | undefined;
+      let capturedMethod: string | undefined;
+      let capturedHeaders: Headers | undefined;
+      let capturedBody: unknown;
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (url: string, init: RequestInit) => {
+        capturedUrl = String(url);
+        capturedMethod = init.method;
+        capturedHeaders = new Headers(init.headers);
+        capturedBody = init.body;
+        return new Response(null, { status: 204 });
+      }) as unknown as typeof fetch);
+
+      const transport = createRealTransport();
+      const bytes = new TextEncoder().encode("fake png bytes");
+      await expect(transport.uploadProjectIcon("sodium", "png", bytes)).resolves.toBeUndefined();
+      fetchSpy.mockRestore();
+
+      expect(capturedUrl).toBe("https://api.modrinth.com/v2/project/sodium/icon?ext=png");
+      expect(capturedMethod).toBe("PATCH");
+      expect(capturedHeaders?.get("authorization")).toBe("Bearer unit-test-real-transport-token");
+      expect(capturedHeaders?.get("content-type")).toBe("image/png");
+      expect(capturedHeaders?.get("x-panel-version")).toBe("1");
+      expect(capturedBody).toBe(bytes);
+    });
+
+    test("uploadProjectIcon rejects with a CliError mapped from a 400 response, surfacing the API's `description`", async () => {
+      const fetchSpy = mockFetch(
+        () => new Response(JSON.stringify({ description: "invalid image" }), { status: 400 }),
+      );
+
+      const transport = createRealTransport();
+      let caught: unknown;
+      try {
+        await transport.uploadProjectIcon("sodium", "png", new Uint8Array());
+      } catch (err) {
+        caught = err;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      expect((caught as CliError).exitCode).toBe(ExitCode.ApiError);
+      expect((caught as CliError).message).toContain("invalid image");
+    });
+
+    test("uploadProjectIcon rejects with a CliError mapped from a 404 response, carrying the endpoint", async () => {
+      const fetchSpy = mockFetch(() => new Response(JSON.stringify({ error: "not found" }), { status: 404 }));
+
+      const transport = createRealTransport();
+      let caught: unknown;
+      try {
+        await transport.uploadProjectIcon("does-not-exist", "png", new Uint8Array());
+      } catch (err) {
+        caught = err;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      const cliError = caught as CliError;
+      expect(cliError.exitCode).toBe(ExitCode.NotFound);
+      expect(cliError.status).toBe(404);
+      expect(cliError.endpoint).toBe("PATCH /v2/project/does-not-exist/icon");
+    });
   });
 });
