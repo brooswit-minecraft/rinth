@@ -1242,6 +1242,16 @@ into a real pipeline yet.
   environment. `test/integration/project-icon.integration.test.ts`
   and `test/integration/project-edit.integration.test.ts` are both gated on
   `RINTH_TEST_PROJECT` like `publish`'s, which is deliberately left unset.
+- **`ICON_CONTENT_TYPES` (`src/client/index.ts:118-128`) accepts three
+  extensions labrinth's server source does not** — `svg`, `svgz`, and
+  `rgb`, carried over from the docs-sourced reading `project icon`'s
+  section above documents and reconciles. `rinth project icon <id> --file
+  logo.svg` passes rinth's own usage check and uploads, then fails at the
+  API, since `get_image_content_type()`
+  (`apps/labrinth/src/util/ext.rs:3-11`) doesn't match any of the three.
+  Fixing `ICON_CONTENT_TYPES` to the narrower, server-confirmed list
+  (`bmp`/`gif`/`jpeg`/`jpg`/`png`/`webp`) is a deliberate, deferred code
+  change — out of scope for the docs-only evidence upgrade that found it.
 - **Public reads still require `MODRINTH_TOKEN`** — there is no tokenless
   mode, even for routes the Modrinth API itself doesn't require auth for.
 - **npm publish under `@brooswit` is deferred** — it needs the
