@@ -7,6 +7,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/). CI
 enforces that this file has a `## [<version>]` heading matching the
 `version` field in `package.json` — see README.md.
 
+## [0.7.0] - 2026-08-30
+
+Driven by the same hand-`curl`ing session as 0.6.0: the two operations that
+MUTATE an existing project (editing its metadata, uploading its icon) were
+also done by hand that day. Builds on RINTH-2's authenticated project-read
+path and shared 404 diagnosis.
+
+### Added
+
+- `rinth project edit <idOrSlug>` (`src/commands/project.ts`): a SPARSE
+  `PATCH /v2/project/{idOrSlug}` — sends only the fields the operator
+  actually passed on the command line (`--description`, `--body`/
+  `--body-file`, `--client-side`, `--server-side`, `--source-url`,
+  `--issues-url`, `--license`, `--license-url`, repeatable `--category`),
+  never a full object built by reading the project first. Proven by a test
+  asserting the captured PATCH body deep-equals exactly the passed flags.
+  Passing no editable flag is a usage error (exit 2), not a no-op PATCH.
+  `--body`/`--body-file` are mutually exclusive (exit 2), matching
+  `publish`'s `--changelog`/`--changelog-file` pattern. **`--category` is
+  LIST-REPLACING**: repeated `--category` REPLACES the project's whole
+  category list, it does not append — documented plainly in the README and
+  in `--help`/usage so an operator can't discover it by wiping their
+  categories. The write field names differ from the read shape `getProject`
+  returns: license is flat (`license_id`/`license_url`) on write, a nested
+  `license: {id, name, url}` object on read — confirmed against
+  https://docs.modrinth.com/api/operations/modifyproject/ (fetched
+  directly; the vendored `@modrinth/api-client`'s own `projects_v2.edit()`
+  types its body as `Partial<Project>`, which is wrong for this reason, so
+  this deliberately doesn't reuse it). After the write, reads the project
+  back (never trusts the PATCH's own status code) and reports every
+  patched field whose read-back value doesn't match what was sent as a
+  FAILURE — `ExitCode.ApiError` (5), matching `deleteVersionCommand`'s
+  precedent for "a write that 2xx'd but didn't land" (see the BREAKING
+  CHANGE-adjacent process note below), with an additive `reason:
+  "update_not_landed"` under `--json`. `--json` prints the resulting
+  project object; human mode prints only the fields that changed.
+- `rinth project icon <idOrSlug> --file <path>` (`src/commands/project.ts`):
+  `PATCH /v2/project/{idOrSlug}/icon?ext=<ext>` with the raw image bytes as
+  the request body (not multipart) — confirmed against
+  https://docs.modrinth.com/api/operations/changeprojecticon/ (fetched
+  directly) and cross-checked against the vendored `@modrinth/api-client`
+  0.60.0 source, which has no v2 icon method to compare against (only a
+  v3-only `projects_v3.changeIcon()`, itself unusable — see below); **not
+  exercised against a live authenticated call, no `MODRINTH_TOKEN` in this
+  environment** — see PR body for the full account of what was and wasn't
+  confirmed. The extension is inferred from `--file`'s path; an unsupported
+  type is a usage error (exit 2) naming what IS accepted (`png`, `jpg`,
+  `jpeg`, `bmp`, `gif`, `webp`, `svg`, `svgz`, `rgb` — `ICON_CONTENT_TYPES`
+  in `src/client/index.ts`, shared with the real transport's Content-Type
+  header so the two can't drift apart); a missing/nonexistent `--file` is a
+  usage error (exit 2), matching `publish --file`. Reads the project back
+  BEFORE and AFTER the upload and reports the *resulting* `icon_url`; a 2xx
+  that leaves `icon_url` unchanged is a FAILURE — `ExitCode.ApiError` (5),
+  `reason: "icon_not_landed"` under `--json`.
+- `Transport#updateProject(idOrSlug, patch: Record<string, unknown>):
+  Promise<void>` (`src/client/index.ts`/`real.ts`/`fake.ts`): the real
+  transport uses `client.request()` (the same escape hatch
+  `getCurrentUser`/`resolveProjectId` already use) rather than the API
+  client's typed `projects_v2.edit()`, since that method's `Partial<Project>`
+  typing is wrong for the write-shape `license` field (see above). `patch`
+  is a plain `Record<string, unknown>` and the method returns `void`,
+  deliberately NOT the updated project — signature fixed by RINTH-4/RINTH-3
+  epic-level arbitration so both stories' independent branches (this one,
+  and RINTH-3's `project create`/`project submit`) agree on it byte-for-
+  byte; whichever merges into `main` second deletes its duplicate. Callers
+  MUST verify via `getProject` — there is nothing in the PATCH response to
+  trust.
+- `Transport#uploadProjectIcon(idOrSlug, ext, bytes): Promise<void>`
+  (`src/client/index.ts`/`real.ts`/`fake.ts`): a raw `fetch`, the same
+  fallback shape `createVersion`'s `createVersionRaw` uses and for the same
+  underlying reason — `GenericModrinthClient extends XHRUploadClient`,
+  whose `upload()` throws immediately under Bun (`XMLHttpRequest` is
+  undefined), and the only typed icon method in the vendored client
+  (`projects_v3.changeIcon()`) is v3-only and still routes through that
+  same broken `upload()` path. Sends the same Bearer token, User-Agent, and
+  `X-Panel-Version: 1` header every other raw-fetch transport method here
+  carries.
+- `FakeTransportFixtures.project` (`src/client/fake.ts`) can now be a
+  function, not just a fixed value, so a test can return a DIFFERENT
+  project across successive `getProject` calls — needed for `project
+  edit`/`project icon`'s read-back verification tests (before/after
+  comparison, and the deliberately-unchanged-value failure case). Existing
+  fixed-value usages are unaffected.
+- Sixteen-plus new unit tests across `test/unit/commands/project.test.ts`
+  and `test/unit/client/real.test.ts`, covering: every `edit` field
+  individually and combined, the exact-body assertion, no-editable-flag
+  usage error, `--body`/`--body-file` mutual exclusion, a missing
+  `--body-file`, the edit-field-did-not-land failure (including a
+  categories order-insensitive comparison), a good icon upload, an
+  unsupported icon extension, a missing icon file, the icon-did-not-land
+  failure, 404 diagnosis on both commands (pre-flight, write, and
+  read-back), and redaction on both commands' error paths. All run offline
+  against the fake transport; `bun test` passes with zero network access.
+- `test/integration/project-edit.integration.test.ts` and
+  `test/integration/project-icon.integration.test.ts`: gated on
+  `MODRINTH_TOKEN` and additionally `RINTH_TEST_PROJECT` (the same
+  double-gate `publish`/`versions-delete`'s integration tests use), since
+  both mutate a real project. Per epic-level ruling (see PR body), this
+  double-gate is intentionally the full extent of the opt-in — no third
+  env var was added, and neither this session nor the agent attempted to
+  set or discover `RINTH_TEST_PROJECT`. Both restore what they changed
+  (description / icon) back to its pre-test value afterward when they run
+  at all, and skip cleanly, logging why, whenever the double-gate isn't
+  met — which is always true in this repo's default CI today.
+
+### Process note
+
+- `ExitCode.ApiError` (5), not a new taxonomy entry, is now the established
+  pattern (per this story and RINTH-3, by epic-level ruling) for "a write
+  returned 2xx but a read-back proves it didn't land" — `deleteVersionCommand`
+  (`src/commands/versions.ts`) was and remains the reference
+  implementation; this release's two new read-back failures
+  (`update_not_landed`, `icon_not_landed`) follow it exactly, alongside the
+  additive `reason` string `CliError` already carries.
+
 ## [0.6.0] - 2026-08-30
 
 Driven by hand-`curl`ing Modrinth on 2026-08-29 and hitting two places

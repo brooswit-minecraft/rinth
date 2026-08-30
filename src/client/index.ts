@@ -105,6 +105,28 @@ export interface CreateVersionFile {
   data: Uint8Array;
 }
 
+/**
+ * Extensions labrinth's `PATCH /project/{id}/icon` accepts, mapped to the
+ * Content-Type sent with each byte stream — confirmed against
+ * https://docs.modrinth.com/api/operations/changeprojecticon/ (fetched
+ * directly; the vendored `@modrinth/api-client` 0.60.0 has no v2 icon
+ * method to cross-check this against — only a v3 `projects_v3.changeIcon()`
+ * — see `src/client/real.ts`). Shared between the real transport (Content-
+ * Type header) and `rinth project icon`'s own extension validation
+ * (`src/commands/project.ts`), so the two can never drift apart.
+ */
+export const ICON_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  bmp: "image/bmp",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg",
+  svgz: "image/svgz",
+  rgb: "image/rgb",
+};
+
 export interface Transport {
   /** GET labrinth `/user` (v2) — the authenticated user. */
   getCurrentUser(): Promise<Labrinth.Users.v2.User>;
@@ -132,6 +154,30 @@ export interface Transport {
   getVersion(id: string): Promise<Labrinth.Versions.v2.Version>;
   /** DELETE labrinth `/version/{id}` (v2). The live API returns 404 even when the delete succeeds — see `versions delete` in `src/commands/versions.ts`, which never trusts this call's status code on its own and always reads the version back afterward. */
   deleteVersion(id: string): Promise<void>;
+  /**
+   * PATCH labrinth `/project/{idOrSlug}` (v2) — a SPARSE update. Signature
+   * fixed by RINTH-4/RINTH-3 epic-level arbitration so both stories' branches
+   * agree on it byte-for-byte (see PR body): `patch` is a plain
+   * `Record<string, unknown>`, never a typed `Project`/`Partial<Project>` —
+   * the caller (`rinth project edit`, `src/commands/project.ts`) builds it
+   * sparsely, from only the flags the operator actually passed, and this
+   * method must never fill in a default for a key the caller omitted.
+   * Returns `void`, deliberately NOT the updated project: there is nothing
+   * in a PATCH response a caller may trust (`versions delete` established
+   * why — a live API can 2xx a write that didn't land) so every caller MUST
+   * verify via `getProject` afterward rather than being handed a
+   * conveniently-shaped shortcut around that.
+   */
+  updateProject(idOrSlug: string, patch: Record<string, unknown>): Promise<void>;
+  /**
+   * PATCH labrinth `/project/{idOrSlug}/icon` (v2) with the raw image bytes
+   * as the request body and the file extension as the `ext` query param —
+   * see `src/client/real.ts` for why this bypasses `@modrinth/api-client`'s
+   * own upload path, and `ICON_CONTENT_TYPES` above for the accepted
+   * extensions. Returns `void` for the same reason `updateProject` does —
+   * callers must verify via `getProject().icon_url` themselves.
+   */
+  uploadProjectIcon(idOrSlug: string, ext: string, bytes: Uint8Array): Promise<void>;
 }
 
 export { createRealTransport } from "./real.ts";
