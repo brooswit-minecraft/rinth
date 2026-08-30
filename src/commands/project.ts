@@ -48,34 +48,39 @@
 // The PATCH body is `{ status: "processing" }`, NOT `{ requested_status:
 // "approved" }` (an earlier revision of this file used the latter, on a
 // spec-only reading — see PR #16's review for the correction). Confirmed
-// from labrinth's published server source (`modrinth/code`,
-// `routes/v3/projects.rs`) — NOT exercised live, no MODRINTH_TOKEN in the
-// agent environment, but this is server source, not an inference from the
-// OpenAPI document. Two independent branches exist there: `requested_status`
-// (validated against `can_be_requested()`, which excludes `processing`,
-// and writes ONLY that column) and `status` (validated by a permission
-// check that explicitly allows an ordinary, non-moderator user to set
-// `Processing` on a project whose current status is not yet approved —
-// this is the branch that actually performs the submit-for-review
-// transition). `processing` being unrequestable via `requested_status`
-// means it is settable only through the `status` branch, not that it is
-// unsettable altogether. The read-back still never hard-codes an
-// assumption beyond "status actually changed from before the PATCH" —
-// server source is strong evidence, but this has still never been
-// exercised as a live round-trip.
+// from labrinth's published server source at github.com/modrinth/code —
+// NOT exercised live, no MODRINTH_TOKEN in the agent environment, but this
+// is server source, not an inference from the OpenAPI document. Two
+// independent branches exist in `apps/labrinth/src/routes/v3/projects.rs`:
+// the `requested_status` branch (line 801) is validated against
+// `can_be_requested()` (`apps/labrinth/src/models/v3/projects.rs:570` —
+// the `ProjectStatus` overload; a distinct `VersionStatus` one exists at
+// :957, not this one — which excludes `processing`) and writes ONLY that
+// column; the `status` branch's permission check (line 581) explicitly
+// allows an ordinary, non-moderator user to set `Processing` on a project
+// whose current status is not yet approved (`!status.is_approved() &&
+// status == &ProjectStatus::Processing`) — this is the branch that
+// actually performs the submit-for-review transition. `processing` being
+// unrequestable via `requested_status` means it is settable only through
+// the `status` branch, not that it is unsettable altogether. The read-back
+// still never hard-codes an assumption beyond "status actually changed
+// from before the PATCH" — server source is strong evidence, but this has
+// still never been exercised as a live round-trip.
 //
-// Submittable statuses: `draft` and `rejected`. Confirmed from the same
-// server source: `is_approved()` (which gates the `requested_status`
-// permission branch) matches only `Approved|Archived|Unlisted|Private` —
-// `Rejected` is not among them, so a rejected project passes the same
-// non-approved guard a draft does and can be resubmitted after fixes.
+// Submittable statuses: `draft` and `rejected`. Confirmed from
+// `apps/labrinth/src/models/v3/projects.rs:559`: `is_approved()` matches
+// exactly `Approved | Archived | Unlisted | Private` — `Rejected` is not
+// among them, so a rejected project passes the same `!is_approved()` guard
+// a draft does and can be resubmitted after fixes.
 //
 // The believed live-API hazard ("submitting a project with no versions is
-// refused") is REAL — confirmed from the same server source, which refuses
-// exactly the draft/rejected -> processing transition this command
-// performs when `project.versions` is empty. Enforced here as a pre-flight
-// refusal (naming the project, before ever PATCHing) rather than left to
-// surface as a raw API error.
+// refused") is REAL — confirmed from
+// `apps/labrinth/src/routes/v3/projects.rs:616`, which refuses exactly the
+// draft/rejected -> processing transition this command performs when
+// `project.versions` is empty (message: "Project submitted for review with
+// no initial versions"). Enforced here as a pre-flight refusal (naming the
+// project, before ever PATCHing) rather than left to surface as a raw API
+// error.
 
 import { existsSync, readFileSync } from "node:fs";
 import type { Labrinth } from "@modrinth/api-client";
@@ -336,7 +341,7 @@ async function create(args: string[], ctx: CommandContext): Promise<number> {
 
 const SUBMIT_USAGE = "Usage: rinth project submit <idOrSlug>";
 
-/** See file header: `draft` and `rejected` are both submittable, confirmed from labrinth's server source (`is_approved()` excludes both). */
+/** See file header: `draft` and `rejected` are both submittable — `apps/labrinth/src/models/v3/projects.rs:559`'s `is_approved()` excludes both. */
 const SUBMITTABLE_STATUSES: ReadonlySet<Labrinth.Projects.v2.ProjectStatus> = new Set(["draft", "rejected"]);
 
 async function readProjectOrDiagnose(idOrSlug: string, ctx: CommandContext): Promise<Labrinth.Projects.v2.Project> {
@@ -366,9 +371,10 @@ async function submit(args: string[], ctx: CommandContext): Promise<number> {
     );
   }
 
-  // Confirmed real from labrinth's server source — see the file header.
-  // Checked here (using the `versions` array `before` already carries, no
-  // extra request) rather than left to surface as a raw API error.
+  // Confirmed real: apps/labrinth/src/routes/v3/projects.rs:616 — see the
+  // file header. Checked here (using the `versions` array `before` already
+  // carries, no extra request) rather than left to surface as a raw API
+  // error.
   if (before.versions.length === 0) {
     throw new CliError(
       `Project ${idOrSlug} cannot be submitted for review: it has no versions. Publish at least one version first (see \`rinth publish\`).`,

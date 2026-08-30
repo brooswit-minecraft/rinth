@@ -49,19 +49,23 @@ moving into review — out of hand-typed curl.
   established — never reports success on the write's own result, and a
   read-back showing no status change is reported as a failure (exit 5,
   `ApiError`, reason `"submit_unverified"`). `draft` and `rejected` are
-  treated as submittable (confirmed from labrinth's server source —
-  `is_approved()` excludes both); a non-submittable state is refused (exit
-  5, reason `"not_submittable"`) naming the actual status. The PATCH body
-  is `{ "status": "processing" }`, constructed as a literal with no
-  reference to the project just read, so it cannot be accidentally widened.
-  Confirmed from labrinth's published server source at `modrinth/code`
-  (`routes/v3/projects.rs`): `requested_status` (validated against
-  `can_be_requested()`, which excludes `processing`) writes only that one
-  column and never touches `status`; `status` is validated by a separate
-  permission check that explicitly allows an ordinary user to set
-  `Processing` on a non-approved project, and is the branch that actually
-  performs the transition. A pre-flight refusal (exit 5, reason
-  `"no_versions"`) blocks submitting a project with no versions before ever
+  treated as submittable — confirmed from
+  `apps/labrinth/src/models/v3/projects.rs:559`'s `is_approved()`, which
+  excludes both — a non-submittable state is refused (exit 5, reason
+  `"not_submittable"`) naming the actual status. The PATCH body is `{
+  "status": "processing" }`, constructed as a literal with no reference to
+  the project just read, so it cannot be accidentally widened. Confirmed
+  from `apps/labrinth/src/routes/v3/projects.rs` (github.com/modrinth/code):
+  `requested_status` (validated against `can_be_requested()` —
+  `apps/labrinth/src/models/v3/projects.rs:570`, the `ProjectStatus`
+  overload, not the distinct `VersionStatus` one at `:957` — which excludes
+  `processing`; branch at line 801) writes only that one column and never
+  touches `status`; `status` is validated by a separate permission check
+  (line 581) that explicitly allows an ordinary user to set `Processing`
+  on a non-approved project, and is the branch that actually performs the
+  transition. A pre-flight refusal (exit 5, reason `"no_versions"`), citing
+  `apps/labrinth/src/routes/v3/projects.rs:616`, blocks submitting a
+  project with no versions before ever
   PATCHing — also confirmed real from the same server source, which refuses
   exactly this transition when `versions` is empty. See README "`rinth
   project submit`" for the full account, including the earlier
