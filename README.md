@@ -553,6 +553,14 @@ don't cover either way); migrating it to the v1 content API is a follow-up,
 not done here — it would need a world id from a per-server `GET` that is
 itself 403, so it couldn't be verified live.
 
+This 404 and these 403s no longer reach a caller as bare API strings: see
+"`servers` diagnosis" below for the two sibling messages/`reason` values
+(`"servers_upstream_route_dead"`, `"servers_credential_refused"`) that
+`servers upstream`/`get`/`power`/`exec` now produce instead, and "Known
+gaps / follow-ups" for the production evidence (sickos run `33322343392`)
+that this is a live, ongoing breakage for a real caller, not just this
+research.
+
 ### `rinth servers exec <id> <command...>`
 
 Sends one console command to a server over the Archon WebSocket console API
@@ -1391,13 +1399,32 @@ into a real pipeline yet.
 
 ## Known gaps / follow-ups
 
-- **`servers upstream` is non-functional against the live API** — the v0
-  `reinstall` route it calls is dead at the router (404 regardless of
-  credentials, server, or project); it needs migration to the v1 content
-  API (`POST /v1/servers/{id}/worlds/{world}/content`).
+- **`servers upstream` is non-functional against the live API — and this is
+  not theoretical, it is a live breakage with a real consumer failing in
+  production right now.** The v0 `reinstall` route it calls is dead at the
+  router (404 regardless of credentials, server, or project); it needs
+  migration to the v1 content API (`POST
+  /v1/servers/{id}/worlds/{world}/content`), not done here (see "Scope
+  boundary" under RINTH-14's ticket, or the PR body, for why). Production
+  evidence, attributed rather than observed from this environment (there is
+  no `MODRINTH_TOKEN` here): `brooswit-minecraft/schematic`'s
+  `.github/workflows/reusable-server-update.yml` already calls `rinth
+  servers upstream`, pinned to a pre-tag commit, in its deploy pipeline.
+  Sickos run `33322343392` (2026-08-30T16:23:59Z) shows the step "Resolve
+  published version id" succeeding and the very next step, "Update Modrinth
+  server", failing (step-level conclusions confirmed via the run API) —
+  reported (SCHEM-6, verified by RINTH-1) failing on **every** Server
+  update run since 2026-08-29T00:52, with a valid token and correct
+  `SERVER_ID`/`PROJECT_ID`/`VERSION_ID`. A caller in that position sees
+  exit 4 (`NotFound`) with `reason: "servers_upstream_route_dead"` — see
+  "`rinth servers upstream`" above and "Errors under `--json`" below for
+  what that message now says instead of a bare 404.
 - **`servers get`/`power`/`exec` require a credential Archon accepts for
   that specific server** — a PAT is refused with 403 today; only a
-  browser session token works, and there's no way to obtain one in CI.
+  browser session token works, and there's no way to obtain one in CI. A
+  caller sees exit 3 (`AuthMissing`) with `reason:
+  "servers_credential_refused"`, naming the specific server — see
+  "Authentication — what a token can and cannot do" above.
 - **The `publish` success path has never been exercised against the live
   API** — `test/integration/publish.integration.test.ts` is gated on
   `RINTH_TEST_PROJECT`, which is deliberately left unset.
@@ -1535,6 +1562,51 @@ This only ever rewrites the *message* (and sets `reason` — see below); the
 exit code, `status`, and `endpoint` are preserved exactly, so the `--json`
 error shape does not change shape.
 
+### `servers` diagnosis
+
+`servers get`, `power`, `upstream`, and `exec` route their failures through
+two sibling helpers in `src/diagnose.ts`, same file and same
+message-only/`reason`-only contract as `diagnoseNotFound` above, instead of
+letting a bare API string (e.g. `not found`, the entire output) reach the
+user. Unlike `diagnoseNotFound`'s draft-vs-nonexistent case, these two are
+**not** one outcome covering multiple candidate causes — each is uniquely
+determined by which call produced it, so naming one confidently is honest,
+not a guess:
+
+- **`diagnoseUpstreamRouteDead`** rewrites a 404 from `servers upstream`'s
+  `reinstall` call (the only thing that call ever hits). This route is
+  proven dead at the router, independent of credentials, server, or
+  project — see "`rinth servers upstream`" above — so the message names the
+  route explicitly and states the remedy is a rinth-side migration to the
+  v1 content API, not anything the caller can change. Reason:
+  `"servers_upstream_route_dead"`.
+- **`diagnoseServerCredentialRefused`** rewrites a 403 from any per-server
+  Archon endpoint (`servers get`, `power`, `exec`'s WebSocket auth, and
+  `upstream`'s post-reinstall read-back). Every one of these routes rejects
+  a PAT identically — confirmed from labrinth's published PAT scope enum
+  (there is no `SERVER`/`ARCHON`/`PYRO` scope at all, see "Authentication —
+  what a token can and cannot do" above) — so a 403 here is always the
+  identity wall, never an ownership/permissions question a different PAT
+  could fix. The message names the specific server and points at
+  "Authentication — what a token can and cannot do". Reason:
+  `"servers_credential_refused"`.
+
+`servers upstream`'s project-resolution step (`--project <slug|id>` ->
+`resolveProjectId`) is a project lookup like any other, so its 404 goes
+through the existing `diagnoseNotFound` (reason `"project_unreadable"`)
+instead of a third helper — reusing the shared helper rather than
+duplicating it, per RINTH-14. `servers list` is untouched: `GET
+/modrinth/v0/servers` is not a per-server route and is not known to be
+dead, so there is nothing here to diagnose.
+
+Because the 404 (dead route) and the 403 (identity wall) never overlap —
+different status codes, different call sites, both independently proven —
+there is no genuinely ambiguous case between them to name, unlike the
+project/version 404. If that ever stops being true (e.g. a future Archon
+change makes one of these routes 403 for a *different* reason than
+credential type), the honest answer is a new candidate-cause message, not a
+guess layered onto these two.
+
 ### Errors under `--json`
 
 Every API-backed command routes its failures through the same `CliError`,
@@ -1545,14 +1617,17 @@ and (**new**) a machine-readable `reason` string (`null` when none applies)
 so a consumer can switch on a stable string instead of memorizing exit
 codes — e.g. `"auth"`, `"project_unreadable"`, `"no_version_match"`,
 `"wait_exhausted"`, `"update_not_landed"` (`project edit`'s read-back
-verification), `"icon_not_landed"` (`project icon`'s). `reason` is purely
-additive: every other field keeps its existing name and meaning.
+verification), `"icon_not_landed"` (`project icon`'s),
+`"servers_upstream_route_dead"` (`servers upstream`'s dead v0 `reinstall`
+route), `"servers_credential_refused"` (a per-server Archon 403 — see
+"`servers` diagnosis" above). `reason` is purely additive: every other
+field keeps its existing name and meaning.
 
 - **Plain text** (`--json` not set): the stderr message includes status and
   endpoint when present, e.g.
 
   ```
-  HTTP 403 GET /modrinth/v0/servers/<id>: Forbidden
+  Server ff783f0f-ec3c-4037-b39f-452ce590891d refused this credential (HTTP 403). A labrinth PAT cannot carry per-server Archon access — this is an identity wall, not a missing PAT scope (there is no SERVER/ARCHON/PYRO scope at all). Only a browser session token works here, and there is no way to obtain one in CI. See README "Authentication — what a token can and cannot do".
   ```
 
   When neither a status nor an endpoint applies (e.g. a usage error), the
@@ -1562,7 +1637,7 @@ additive: every other field keeps its existing name and meaning.
   print) and a single JSON value is written to stderr:
 
   ```json
-  {"error":{"code":3,"status":403,"endpoint":"GET /modrinth/v0/servers/<id>","message":"HTTP 403 GET /modrinth/v0/servers/<id>: Forbidden","reason":null}}
+  {"error":{"code":3,"status":403,"endpoint":"GET /modrinth/v0/servers/ff783f0f-ec3c-4037-b39f-452ce590891d","message":"Server ff783f0f-ec3c-4037-b39f-452ce590891d refused this credential (HTTP 403). A labrinth PAT cannot carry per-server Archon access — this is an identity wall, not a missing PAT scope (there is no SERVER/ARCHON/PYRO scope at all). Only a browser session token works here, and there is no way to obtain one in CI. See README \"Authentication — what a token can and cannot do\".","reason":"servers_credential_refused"}}
   ```
 
   `code` is the process exit code (same table as above); `status` is the raw

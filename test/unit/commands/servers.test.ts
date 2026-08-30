@@ -418,6 +418,139 @@ describe("rinth servers upstream", () => {
     expect(code).toBe(ExitCode.Network);
     errSpy.mockRestore();
   });
+
+  describe("RINTH-14: diagnosed failures never reach the user as a bare API string", () => {
+    test("a real 404 from the reinstall route names the dead v0 route and the rinth-side remedy, with a distinct reason under --json", async () => {
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
+      const transport = createFakeTransport({
+        setUpstreamError: apiError(ExitCode.NotFound, "Not Found", {
+          status: 404,
+          endpoint: "POST /modrinth/v0/servers/srv_123/reinstall",
+        }),
+      });
+
+      const code = await run(
+        ["--json", "servers", "upstream", "srv_123", "--project", "AABBCCDD", "--version", "version_1"],
+        { transport },
+      );
+
+      expect(code).toBe(ExitCode.NotFound);
+      const printed = JSON.parse(String(errSpy.mock.calls[0]?.[0])) as {
+        error: { message: string; reason: string | null };
+      };
+      errSpy.mockRestore();
+
+      expect(printed.error.message).not.toBe("HTTP 404 POST /modrinth/v0/servers/srv_123/reinstall: Not Found");
+      expect(printed.error.message).toContain("reinstall");
+      expect(printed.error.message).toContain("dead at the router");
+      expect(printed.error.reason).toBe("servers_upstream_route_dead");
+    });
+
+    test("a real 403 from the per-server Archon read-back names the server and the PAT identity wall, with a distinct reason under --json", async () => {
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
+      const transport = createFakeTransport({
+        resolveProjectId: "AABBCCDD",
+        serverError: apiError(ExitCode.AuthMissing, "Forbidden", {
+          status: 403,
+          endpoint: "GET /modrinth/v0/servers/srv_123",
+        }),
+      });
+
+      const code = await run(
+        ["--json", "servers", "upstream", "srv_123", "--project", "fabulously-optimized", "--version", "version_1"],
+        { transport },
+      );
+
+      expect(code).toBe(ExitCode.AuthMissing);
+      const printed = JSON.parse(String(errSpy.mock.calls[0]?.[0])) as {
+        error: { message: string; reason: string | null };
+      };
+      errSpy.mockRestore();
+
+      expect(printed.error.message).not.toBe("HTTP 403 GET /modrinth/v0/servers/srv_123: Forbidden");
+      expect(printed.error.message).toContain("srv_123");
+      expect(printed.error.message).toContain("identity wall");
+      expect(printed.error.reason).toBe("servers_credential_refused");
+    });
+
+    test("a 403 from `servers get` is diagnosed the same way as upstream's read-back", async () => {
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
+      const transport = createFakeTransport({
+        serverError: apiError(ExitCode.AuthMissing, "Forbidden", {
+          status: 403,
+          endpoint: "GET /modrinth/v0/servers/srv_123",
+        }),
+      });
+
+      const code = await run(["--json", "servers", "get", "srv_123"], { transport });
+
+      expect(code).toBe(ExitCode.AuthMissing);
+      const printed = JSON.parse(String(errSpy.mock.calls[0]?.[0])) as { error: { reason: string | null } };
+      errSpy.mockRestore();
+
+      expect(printed.error.reason).toBe("servers_credential_refused");
+    });
+
+    test("a 403 from `servers power` is diagnosed the same way", async () => {
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
+      const transport = createFakeTransport({
+        powerError: apiError(ExitCode.AuthMissing, "Forbidden", {
+          status: 403,
+          endpoint: "POST /modrinth/v0/servers/srv_123/power",
+        }),
+      });
+
+      const code = await run(["--json", "servers", "power", "srv_123", "restart"], { transport });
+
+      expect(code).toBe(ExitCode.AuthMissing);
+      const printed = JSON.parse(String(errSpy.mock.calls[0]?.[0])) as { error: { reason: string | null } };
+      errSpy.mockRestore();
+
+      expect(printed.error.reason).toBe("servers_credential_refused");
+    });
+
+    test("a 403 from `servers exec`'s WebSocket auth is diagnosed the same way", async () => {
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
+      const transport = createFakeTransport({
+        wsAuthError: apiError(ExitCode.AuthMissing, "Forbidden", {
+          status: 403,
+          endpoint: "GET /modrinth/v0/servers/srv_1/ws",
+        }),
+      });
+
+      const code = await run(["--json", "servers", "exec", "srv_1", "say", "hello"], { transport });
+
+      expect(code).toBe(ExitCode.AuthMissing);
+      const printed = JSON.parse(String(errSpy.mock.calls[0]?.[0])) as { error: { reason: string | null } };
+      errSpy.mockRestore();
+
+      expect(printed.error.reason).toBe("servers_credential_refused");
+    });
+
+    test("a real 404 from resolveProjectId reuses the existing project-lookup diagnosis (reason 'project_unreadable'), distinct from the two servers-specific reasons", async () => {
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
+      const transport = createFakeTransport({
+        resolveProjectIdError: apiError(ExitCode.NotFound, "Not Found", {
+          status: 404,
+          endpoint: "GET /v2/project/bogus-slug",
+        }),
+      });
+
+      const code = await run(
+        ["--json", "servers", "upstream", "srv_123", "--project", "bogus-slug", "--version", "version_1"],
+        { transport },
+      );
+
+      expect(code).toBe(ExitCode.NotFound);
+      const printed = JSON.parse(String(errSpy.mock.calls[0]?.[0])) as {
+        error: { message: string; reason: string | null };
+      };
+      errSpy.mockRestore();
+
+      expect(printed.error.reason).toBe("project_unreadable");
+      expect(printed.error.message).toContain("rinth whoami");
+    });
+  });
 });
 
 describe("rinth servers exec", () => {
