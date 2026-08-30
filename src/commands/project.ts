@@ -33,41 +33,49 @@
 // (mod/modpack/resourcepack/shader/...), which conflated the create-time
 // enum with `Labrinth.Projects.v2.ProjectType`'s broader *display* type.
 //
-// `rinth project submit <idOrSlug>` — moves a project out of `draft` via
-// labrinth v2 `PATCH /project/{idOrSlug}` (Transport#updateProject, the
-// general sparse-patch method RINTH-4's `project edit` also uses — exact
-// signature fixed by epic arbitration, see src/client/index.ts). The
-// discipline: read first, refuse a non-submittable state BY NAME, PATCH,
-// read back, and report the RESULTING status — never the write's own
-// status code — following exactly the read-back pattern `deleteVersionCommand`
-// (src/commands/versions.ts) and `servers upstream` (src/commands/servers.ts)
-// established. A residual 404 on either read goes through the same
-// `diagnoseNotFound` helper `get()` below uses.
+// `rinth project submit <idOrSlug>` — moves a project out of `draft`/
+// `rejected` via labrinth v2 `PATCH /project/{idOrSlug}`
+// (Transport#updateProject, the general sparse-patch method RINTH-4's
+// `project edit` also uses — exact signature fixed by epic arbitration, see
+// src/client/index.ts). The discipline: read first, refuse a
+// non-submittable state BY NAME, PATCH, read back, and report the
+// RESULTING status — never the write's own status code — following exactly
+// the read-back pattern `deleteVersionCommand` (src/commands/versions.ts)
+// and `servers upstream` (src/commands/servers.ts) established. A residual
+// 404 on either read goes through the same `diagnoseNotFound` helper
+// `get()` below uses.
 //
-// The PATCH body is `{ requested_status: "approved" }`, not `{ status:
-// "processing" }` as a first reading of "draft -> processing" might
-// suggest: the PATCH schema's `requested_status` enum (confirmed from the
-// same OpenAPI spec) is `approved|archived|unlisted|private|draft` —
-// `processing` is NOT a valid `requested_status` value. This matches how
-// Modrinth's own submit-for-review flow works: a normal user requests the
-// status they want *after* review (`approved`), and the moderation
-// pipeline is what actually flips `status` to `processing`; a normal user
-// cannot PATCH `status` directly to a moderator-controlled value. This is
-// confirmed from spec/source only — NOT exercised live, no MODRINTH_TOKEN
-// in the agent environment — so the read-back never hard-asserts the
-// resulting status equals `"processing"`; it only requires that `status`
-// actually changed from what it was before the PATCH, and reports whatever
-// it became. See the README and PR body.
+// The PATCH body is `{ status: "processing" }`, NOT `{ requested_status:
+// "approved" }` (an earlier revision of this file used the latter, on a
+// spec-only reading — see PR #16's review for the correction). Confirmed
+// from labrinth's published server source (`modrinth/code`,
+// `routes/v3/projects.rs`) — NOT exercised live, no MODRINTH_TOKEN in the
+// agent environment, but this is server source, not an inference from the
+// OpenAPI document. Two independent branches exist there: `requested_status`
+// (validated against `can_be_requested()`, which excludes `processing`,
+// and writes ONLY that column) and `status` (validated by a permission
+// check that explicitly allows an ordinary, non-moderator user to set
+// `Processing` on a project whose current status is not yet approved —
+// this is the branch that actually performs the submit-for-review
+// transition). `processing` being unrequestable via `requested_status`
+// means it is settable only through the `status` branch, not that it is
+// unsettable altogether. The read-back still never hard-codes an
+// assumption beyond "status actually changed from before the PATCH" —
+// server source is strong evidence, but this has still never been
+// exercised as a live round-trip.
 //
-// Submittable statuses: only `draft`. Whether a `rejected` project can be
-// resubmitted this same way could not be settled from spec or source (it is
-// UNSETTLED, not a guess), so the conservative choice — excluding it — is
-// what's implemented; see the README.
+// Submittable statuses: `draft` and `rejected`. Confirmed from the same
+// server source: `is_approved()` (which gates the `requested_status`
+// permission branch) matches only `Approved|Archived|Unlisted|Private` —
+// `Rejected` is not among them, so a rejected project passes the same
+// non-approved guard a draft does and can be resubmitted after fixes.
 //
 // The believed live-API hazard ("submitting a project with no versions is
-// refused") is also UNSETTLED from spec/source alone and is deliberately
-// NOT enforced here as invented client-side behavior — see the README's
-// "Known gaps / follow-ups".
+// refused") is REAL — confirmed from the same server source, which refuses
+// exactly the draft/rejected -> processing transition this command
+// performs when `project.versions` is empty. Enforced here as a pre-flight
+// refusal (naming the project, before ever PATCHing) rather than left to
+// surface as a raw API error.
 
 import { existsSync, readFileSync } from "node:fs";
 import type { Labrinth } from "@modrinth/api-client";
@@ -328,8 +336,8 @@ async function create(args: string[], ctx: CommandContext): Promise<number> {
 
 const SUBMIT_USAGE = "Usage: rinth project submit <idOrSlug>";
 
-/** See file header: only `draft` is treated as submittable. Whether `rejected` also is could not be settled from spec/source alone (UNSETTLED, not a guess) — excluded as the conservative choice. */
-const SUBMITTABLE_STATUSES: ReadonlySet<Labrinth.Projects.v2.ProjectStatus> = new Set(["draft"]);
+/** See file header: `draft` and `rejected` are both submittable, confirmed from labrinth's server source (`is_approved()` excludes both). */
+const SUBMITTABLE_STATUSES: ReadonlySet<Labrinth.Projects.v2.ProjectStatus> = new Set(["draft", "rejected"]);
 
 async function readProjectOrDiagnose(idOrSlug: string, ctx: CommandContext): Promise<Labrinth.Projects.v2.Project> {
   try {
@@ -352,15 +360,26 @@ async function submit(args: string[], ctx: CommandContext): Promise<number> {
 
   if (!SUBMITTABLE_STATUSES.has(before.status)) {
     throw new CliError(
-      `Project ${idOrSlug} is not submittable: its status is currently '${before.status}'. Only a 'draft' project can be submitted for review.`,
+      `Project ${idOrSlug} is not submittable: its status is currently '${before.status}'. Only a 'draft' or 'rejected' project can be submitted for review.`,
       ExitCode.ApiError,
       { reason: "not_submittable" },
     );
   }
 
-  // See the file header for why this PATCHes `requested_status: "approved"`
-  // rather than `status: "processing"`.
-  await ctx.transport.updateProject(idOrSlug, { requested_status: "approved" });
+  // Confirmed real from labrinth's server source — see the file header.
+  // Checked here (using the `versions` array `before` already carries, no
+  // extra request) rather than left to surface as a raw API error.
+  if (before.versions.length === 0) {
+    throw new CliError(
+      `Project ${idOrSlug} cannot be submitted for review: it has no versions. Publish at least one version first (see \`rinth publish\`).`,
+      ExitCode.ApiError,
+      { reason: "no_versions" },
+    );
+  }
+
+  // See the file header for why this PATCHes `status: "processing"` rather
+  // than `requested_status: "approved"`.
+  await ctx.transport.updateProject(idOrSlug, { status: "processing" });
 
   const after = await readProjectOrDiagnose(idOrSlug, ctx);
 

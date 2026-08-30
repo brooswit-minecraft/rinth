@@ -477,30 +477,55 @@ on its own when it claims to have changed something.
 rinth project submit my-draft-mod
 ```
 
-**Submittable statuses**: only `draft`. Whether a `rejected` project can be
-resubmitted this same way could not be settled from spec/source alone (no
-`MODRINTH_TOKEN` in the agent environment) — this is **unsettled, not a
-guess**, so the conservative choice (excluding it) is what's implemented.
-Submitting anything other than a `draft` project is refused with a
-non-zero exit (5, `ApiError`) naming the actual state:
+**Submittable statuses**: `draft` and `rejected` (a rejected project can be
+fixed and resubmitted). Confirmed from labrinth's published server source at
+`modrinth/code` (`models/v3/projects.rs`'s `is_approved()`, which matches
+only `Approved|Archived|Unlisted|Private` — `Rejected` is not among them, so
+it passes the same non-approved guard a draft does) — **not exercised
+live**, but this is server source, not an inference from the OpenAPI
+document. Submitting anything else is refused with a non-zero exit (5,
+`ApiError`) naming the actual state:
 
 ```
-Project my-draft-mod is not submittable: its status is currently 'processing'. Only a 'draft' project can be submitted for review.
+Project my-draft-mod is not submittable: its status is currently 'processing'. Only a 'draft' or 'rejected' project can be submitted for review.
 ```
 
-**Why the PATCH body is `{ "requested_status": "approved" }`, not `{
-"status": "processing" }`**: confirmed from the OpenAPI spec at
-docs.modrinth.com's "Modify a project" — **not exercised live**. The PATCH
-schema's `requested_status` enum is `approved|archived|unlisted|private|draft`
-— **`processing` is not a valid `requested_status` value**, so a direct "set
-status to processing" PATCH isn't how this works. Instead, a normal user
-requests the status they want *after* review (`approved`), and Modrinth's
-moderation pipeline is what actually flips `status` to `processing`; `status`
-itself is moderator-controlled and not something a normal token can set
-directly. Because this is confirmed from spec/source only, the read-back
-never hard-asserts the resulting status equals `"processing"` — it only
-requires that `status` actually changed from what it was before the PATCH,
-and reports whatever it became.
+**Why the PATCH body is `{ "status": "processing" }`, not `{
+"requested_status": "approved" }`**: an earlier revision of this command
+sent `requested_status` instead, on a spec-only reading — the OpenAPI
+document's `requested_status` enum (`approved|archived|unlisted|private|draft`)
+excludes `processing`, which looked like proof that `status` couldn't be set
+directly. Reading labrinth's actual server source
+(`routes/v3/projects.rs`) corrected this: there are two independent
+branches. `requested_status` is validated against `can_be_requested()`
+(which does exclude `processing`) and writes *only* that column, never
+touching `status`. `status` is validated by a separate permission check —
+`!project.status.is_approved() && status == Processing` — that explicitly
+allows an ordinary, non-moderator user to set `Processing` on a project
+that isn't yet approved. That second branch is the one that actually
+performs the submit-for-review transition. `processing` being excluded from
+`requested_status` meant it was settable only through the *other* branch,
+not that it was unsettable — a correct premise, but an inference that
+missed a branch. This is confirmed from labrinth's server source (stronger
+evidence than the OpenAPI spec, though still not a live round-trip — no
+`MODRINTH_TOKEN` in the agent environment), so the read-back still doesn't
+lean on that confirmation alone: it only requires that `status` actually
+changed from what it was before the PATCH, and reports whatever it became.
+
+**No-versions hazard, confirmed real and enforced as a pre-flight refusal**:
+labrinth's server source (`routes/v3/projects.rs`) refuses exactly the
+draft/rejected -> `processing` transition this command performs when the
+project has no versions (`"Project submitted for review with no initial
+versions"`). Since this is the most likely real-world path through `project
+create` immediately followed by `project submit`, `rinth project submit`
+checks `versions` on the already-fetched project (no extra request) and
+refuses by name *before* ever PATCHing:
+
+```
+Project my-draft-mod cannot be submitted for review: it has no versions. Publish at least one version first (see `rinth publish`).
+```
+
+`reason: "no_versions"` in the `--json` error shape.
 
 **`--json`** on success:
 
@@ -528,15 +553,6 @@ shared with `rinth project edit` — that resolves `void`, never the updated
 project: the live API's own write response is never trustworthy on its own
 (see `rinth versions delete`'s 404-on-success quirk), so every caller must
 read the resource back to learn what actually happened.
-
-**Believed live-API hazard, left unenforced**: labrinth is believed to
-refuse submitting a project with no versions. This could not be settled from
-spec or source alone (no `MODRINTH_TOKEN` in the agent environment to
-observe it), so it is **documented as unsettled, not invented as behavior**
-— `rinth project submit` does not pre-emptively block a version-less
-project; if the live API does refuse it, the API's own error message (which
-`toCliError()` already surfaces, not a bare status code) reaches the caller
-as-is. See "Known gaps / follow-ups" below.
 
 **Draft visibility**: like `rinth project get`, both `create`'s implicit
 read-back-free write and `submit`'s read/read-back go through the
@@ -905,25 +921,21 @@ into a real pipeline yet.
   design, not a rinth limitation to fix: see "404 diagnosis" above, which
   states this honestly as one outcome with multiple candidate causes rather
   than guessing which one applies.
-- **`project create`'s required-field set, `project_type` enum, and
-  `project submit`'s `requested_status`/`processing` mechanism are confirmed
-  from the OpenAPI spec at docs.modrinth.com and the vendored
-  `@modrinth/api-client` source only — none of this has been exercised
-  against the live API.** There is no `MODRINTH_TOKEN` in this agent
-  environment. See the "`rinth project create`"/"`rinth project submit`"
-  sections above for exactly what was confirmed and from where.
-- **Whether a `rejected` project can be resubmitted via `project submit` is
-  unsettled** — could not be determined from spec or vendored source alone,
-  and was not guessed at. `project submit` conservatively treats only
-  `draft` as submittable; a `rejected` project is refused by name like any
-  other non-submittable state, pending confirmation one way or the other.
-- **Whether labrinth refuses `project submit` on a project with no versions
-  is unsettled** — believed real (per the ticket that produced this
-  command), but could not be confirmed from spec/source, and no
-  `MODRINTH_TOKEN` was available to observe it live. `project submit` does
-  not pre-emptively invent a client-side block for this: if the live API
-  does refuse it, its own error message reaches the caller via the normal
-  error path, not a bare status code.
+- **`project create`'s required-field set and `project_type` enum are
+  confirmed from the OpenAPI spec at docs.modrinth.com; `project submit`'s
+  `status`/`processing` PATCH mechanism, its `draft`+`rejected` submittable
+  set, and its no-versions refusal are confirmed from labrinth's published
+  server source at `modrinth/code` (`routes/v3/projects.rs`,
+  `models/v3/projects.rs`) — stronger evidence than the OpenAPI document,
+  but still not a live round-trip: there is no `MODRINTH_TOKEN` in this
+  agent environment, so none of this has been exercised against the live
+  API.** See the "`rinth project create`"/"`rinth project submit`" sections
+  above for exactly what was confirmed and from where. (An earlier revision
+  of `project submit` PATCHed `requested_status: "approved"` on a spec-only
+  reading; reading labrinth's server source found `requested_status` never
+  touches `status` at all, and corrected the mechanism to `{ "status":
+  "processing" }` — see that section for the full account of the two
+  independent PATCH branches involved.)
 - **`project submit`'s success path (draft -> processing) has never been
   exercised against the live API, and never will be by this test suite as
   currently designed** — unlike `publish`/`versions delete`/`project

@@ -987,13 +987,13 @@ describe("createRealTransport", () => {
       }) as unknown as typeof fetch);
 
       const transport = createRealTransport();
-      const result = await transport.updateProject("my-draft-mod", { requested_status: "approved" });
+      const result = await transport.updateProject("my-draft-mod", { status: "processing" });
       fetchSpy.mockRestore();
 
       expect(result).toBeUndefined();
       expect(capturedUrl).toContain("/v2/project/my-draft-mod");
       expect(capturedMethod).toBe("PATCH");
-      expect(capturedBody).toEqual({ requested_status: "approved" });
+      expect(capturedBody).toEqual({ status: "processing" });
     });
 
     test("updateProject rejects with a CliError mapped from a 404 response, carrying the endpoint", async () => {
@@ -1002,7 +1002,7 @@ describe("createRealTransport", () => {
       const transport = createRealTransport();
       let caught: unknown;
       try {
-        await transport.updateProject("does-not-exist", { requested_status: "approved" });
+        await transport.updateProject("does-not-exist", { status: "processing" });
       } catch (err) {
         caught = err;
       }

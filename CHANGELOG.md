@@ -43,23 +43,29 @@ moving into review — out of hand-typed curl.
   agent environment. See README "`rinth project create`" and "Known gaps /
   follow-ups".
 - `rinth project submit <idOrSlug>` (`src/commands/project.ts`): moves a
-  project out of `draft` via labrinth v2 `PATCH /project/{idOrSlug}`,
-  following the read-first / refuse-by-name / write / read-back discipline
-  `versions delete` and `servers upstream` established — never reports
-  success on the write's own result, and a read-back showing no status
-  change is reported as a failure (exit 5, `ApiError`, reason
-  `"submit_unverified"`). Only `draft` is treated as submittable; a
-  non-submittable state is refused (exit 5, reason `"not_submittable"`)
-  naming the actual status. The PATCH body is `{ "requested_status":
-  "approved" }`, not `{ "status": "processing" }` — confirmed from the
-  OpenAPI spec that `requested_status`'s enum excludes `processing`
-  entirely, so a normal token requests the post-review status it wants and
-  Modrinth's moderation pipeline is what flips `status`. Whether a
-  `rejected` project is also resubmittable, and whether labrinth refuses
-  submitting a project with no versions, could not be settled from spec or
-  vendored source alone (no live token) — both are documented as
-  UNSETTLED, not guessed at; see README "`rinth project submit`" and
-  "Known gaps / follow-ups".
+  project out of `draft`/`rejected` via labrinth v2 `PATCH
+  /project/{idOrSlug}`, following the read-first / refuse-by-name / write /
+  read-back discipline `versions delete` and `servers upstream`
+  established — never reports success on the write's own result, and a
+  read-back showing no status change is reported as a failure (exit 5,
+  `ApiError`, reason `"submit_unverified"`). `draft` and `rejected` are
+  treated as submittable (confirmed from labrinth's server source —
+  `is_approved()` excludes both); a non-submittable state is refused (exit
+  5, reason `"not_submittable"`) naming the actual status. The PATCH body
+  is `{ "status": "processing" }`, constructed as a literal with no
+  reference to the project just read, so it cannot be accidentally widened.
+  Confirmed from labrinth's published server source at `modrinth/code`
+  (`routes/v3/projects.rs`): `requested_status` (validated against
+  `can_be_requested()`, which excludes `processing`) writes only that one
+  column and never touches `status`; `status` is validated by a separate
+  permission check that explicitly allows an ordinary user to set
+  `Processing` on a non-approved project, and is the branch that actually
+  performs the transition. A pre-flight refusal (exit 5, reason
+  `"no_versions"`) blocks submitting a project with no versions before ever
+  PATCHing — also confirmed real from the same server source, which refuses
+  exactly this transition when `versions` is empty. See README "`rinth
+  project submit`" for the full account, including the earlier
+  `requested_status`-based revision this corrects.
 - `Transport#createProject`/`Transport#updateProject`
   (`src/client/index.ts`/`real.ts`/`fake.ts`), plus `CreateProjectRequest`/
   `CreateProjectType`/`CreateProjectEnvironment`/`CreateProjectIconFile`

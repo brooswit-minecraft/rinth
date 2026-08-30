@@ -633,12 +633,15 @@ describe("rinth project submit", () => {
     expect(code).toBe(ExitCode.Usage);
   });
 
-  test("SUCCESS: a draft project is patched with requested_status=approved and the read-back status is reported", async () => {
+  test("SUCCESS: a draft project is patched with status=processing and the read-back status is reported", async () => {
     const logSpy = spyOn(console, "log").mockImplementation(() => {});
     let call = 0;
     let capturedPatch: Record<string, unknown> | undefined;
     const transport = createFakeTransport({
-      project: () => (call++ === 0 ? fixtureProject({ status: "draft" }) : fixtureProject({ status: "processing" })),
+      project: () =>
+        call++ === 0
+          ? fixtureProject({ status: "draft", versions: ["v1"] })
+          : fixtureProject({ status: "processing", versions: ["v1"] }),
       onUpdateProject: (_idOrSlug, patch) => {
         capturedPatch = patch;
       },
@@ -647,16 +650,35 @@ describe("rinth project submit", () => {
     const code = await run(["--json", "project", "submit", "my-draft-mod"], { transport });
 
     expect(code).toBe(ExitCode.Ok);
-    expect(capturedPatch).toEqual({ requested_status: "approved" });
+    expect(capturedPatch).toEqual({ status: "processing" });
     expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ id: "proj_1", slug: "my-draft-mod", status: "processing" }));
     logSpy.mockRestore();
+  });
+
+  test("SUCCESS: a rejected project can also be resubmitted", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    let call = 0;
+    const transport = createFakeTransport({
+      project: () =>
+        call++ === 0
+          ? fixtureProject({ status: "rejected", versions: ["v1"] })
+          : fixtureProject({ status: "processing", versions: ["v1"] }),
+    });
+
+    const code = await run(["project", "submit", "my-draft-mod"], { transport });
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
   });
 
   test("human mode prints one clear line naming before/after status", async () => {
     const logSpy = spyOn(console, "log").mockImplementation(() => {});
     let call = 0;
     const transport = createFakeTransport({
-      project: () => (call++ === 0 ? fixtureProject({ status: "draft" }) : fixtureProject({ status: "processing" })),
+      project: () =>
+        call++ === 0
+          ? fixtureProject({ status: "draft", versions: ["v1"] })
+          : fixtureProject({ status: "processing", versions: ["v1"] }),
     });
 
     const code = await run(["project", "submit", "my-draft-mod"], { transport });
@@ -666,6 +688,26 @@ describe("rinth project submit", () => {
     expect(code).toBe(ExitCode.Ok);
     expect(printed).toContain("draft");
     expect(printed).toContain("processing");
+  });
+
+  test("refuses to submit a project with no versions, naming the reason, without ever calling updateProject", async () => {
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+    let updateAttempted = false;
+    const transport = createFakeTransport({
+      project: fixtureProject({ status: "draft", versions: [] }),
+      onUpdateProject: () => {
+        updateAttempted = true;
+      },
+    });
+
+    const code = await run(["--json", "project", "submit", "my-draft-mod"], { transport });
+    const message = String(errSpy.mock.calls[0]?.[0]);
+    errSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.ApiError);
+    const parsed = JSON.parse(message) as { error: { reason: string | null } };
+    expect(parsed.error.reason).toBe("no_versions");
+    expect(updateAttempted).toBe(false);
   });
 
   test.each(["processing", "approved"] as const)(
@@ -693,7 +735,7 @@ describe("rinth project submit", () => {
   test("a read-back showing no status change is reported as a failure, not a success", async () => {
     const errSpy = spyOn(console, "error").mockImplementation(() => {});
     const transport = createFakeTransport({
-      project: fixtureProject({ status: "draft" }),
+      project: fixtureProject({ status: "draft", versions: ["v1"] }),
     });
 
     const code = await run(["project", "submit", "my-draft-mod"], { transport });
