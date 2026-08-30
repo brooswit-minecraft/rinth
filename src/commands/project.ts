@@ -789,9 +789,14 @@ async function submit(args: string[], ctx: CommandContext): Promise<number> {
 
   const after = await readProjectOrDiagnose(idOrSlug, ctx);
 
-  if (after.status === before.status) {
+  // Ask the STRONG question, not the weak one: did the status land on
+  // `processing` specifically (what this PATCH asked for), not merely
+  // "did it change at all". A moderator changing status between the
+  // read-first and the read-back would otherwise be reported as a
+  // success when the intended outcome never happened.
+  if (after.status !== "processing") {
     throw new CliError(
-      `Submit did not take effect: ${idOrSlug} is still '${after.status}' after the request.`,
+      `Submit did not take effect: ${idOrSlug} is '${after.status}' after the request, expected 'processing'.`,
       ExitCode.ApiError,
       { reason: "submit_unverified" },
     );

@@ -4,7 +4,7 @@ A Modrinth CLI (servers management + publish) wrapping [`@modrinth/api-client`](
 One tested surface usable both by a human at a shell and by CI — there is no
 official Modrinth CLI.
 
-Status: v0.8.0. Full command surface: `whoami`; `servers
+Status: v0.9.0. Full command surface: `whoami`; `servers
 list|get|power|upstream|exec`; `versions list|latest|delete`; `publish`;
 `project get|create|submit|edit|icon`. See "Known gaps / follow-ups" below
 for what still doesn't work against the live API.
@@ -278,6 +278,121 @@ asserts the token value never appears in the captured output.
 `rinth servers list` and `rinth servers get` additionally never include SFTP
 credentials or the Archon node panel token in their output — see the JSON
 shapes below.
+
+## From curl to rinth
+
+Six hand-rolled `curl` calls a project maintainer has typed to manage a
+Modrinth project — replaced one-for-one by a `rinth` command below. Every
+`rinth` invocation's flags are exactly what its own `Usage:` string accepts
+(see the linked sections below for the full reference); this is a pitch for
+the shape of the replacement, not the reference itself. `$MODRINTH_TOKEN`
+is never written as a literal — see "Authentication" above.
+
+**Create a project** — see "[`rinth project
+create`](#rinth-project-create)":
+
+```sh
+curl -X POST https://api.modrinth.com/v2/project \
+  -H "Authorization: $MODRINTH_TOKEN" \
+  -F 'data={"slug":"my-mod","title":"My Mod","description":"A short one-liner","body":"...","project_type":"mod","categories":[],"client_side":"required","server_side":"optional","license_id":"MIT","is_draft":true,"initial_versions":[]};type=application/json'
+```
+```sh
+rinth project create --slug my-mod --title "My Mod" --description "A short one-liner" \
+  --body-file DESCRIPTION.md --project-type mod \
+  --client-side required --server-side optional --license MIT
+```
+
+`--slug --title --description`, one of `--body`/`--body-file`,
+`--project-type`, `--client-side`, `--server-side`, and `--license` are all
+**required** — `rinth` refuses (exit 2) to build the near-empty draft a bare
+`{"project_type":"mod"}` would let the raw API accept. `is_draft: true` and
+`initial_versions: []` are constants this command supplies itself, same as
+the multipart `data` part above; there is no icon part in either — see
+`rinth project icon` below for that.
+
+**Edit project metadata** — see "[`rinth project
+edit`](#rinth-project-edit-idorslug)":
+
+```sh
+curl -X PATCH https://api.modrinth.com/v2/project/my-mod \
+  -H "Authorization: $MODRINTH_TOKEN" -H "Content-Type: application/json" \
+  -d '{"description":"New one-liner","categories":["technology"]}'
+```
+```sh
+rinth project edit my-mod --description "New one-liner" --category technology
+```
+
+Both send the exact same sparse PATCH body — only the flags you pass. **A
+repeated `--category` replaces the whole category list; it does not
+append**, same as the raw PATCH body above replaces whatever `categories`
+already held.
+
+**Read a project, including a DRAFT one** — see "[`rinth project
+get`](#rinth-project-get-idorslug)":
+
+```sh
+curl https://api.modrinth.com/v2/project/my-draft-mod \
+  -H "Authorization: $MODRINTH_TOKEN"
+```
+```sh
+rinth project get my-draft-mod
+```
+
+This is the pair where a hand-typed curl most often goes wrong: a bare `GET`
+doesn't *feel* like it needs auth, so it's easy to leave the header off —
+and a draft this identity can't see 404s byte-identically to a project that
+doesn't exist at all (see "404 diagnosis" below), so a dropped header reads
+as "no such project," not "forgot to authenticate." `rinth` always sends
+`MODRINTH_TOKEN` on every request, including reads, so this class of mistake
+can't happen.
+
+**Delete a version** — see "[`rinth versions
+delete`](#rinth-versions-delete-version_id)":
+
+```sh
+curl -X DELETE https://api.modrinth.com/v2/version/V2Ec5Q1w \
+  -H "Authorization: $MODRINTH_TOKEN"
+```
+```sh
+rinth versions delete V2Ec5Q1w
+```
+
+The live API returns 404 on this route even when the delete *succeeded* —
+`rinth` reads the version back after the call and reports success only when
+it's actually gone, regardless of what the `DELETE` itself returned.
+
+**Submit a project for review (draft → processing)** — see "[`rinth project
+submit`](#rinth-project-submit-idorslug)":
+
+```sh
+curl -X PATCH https://api.modrinth.com/v2/project/my-draft-mod \
+  -H "Authorization: $MODRINTH_TOKEN" -H "Content-Type: application/json" \
+  -d '{"status":"processing"}'
+```
+```sh
+rinth project submit my-draft-mod
+```
+
+`rinth` refuses by name, before ever PATCHing, if the project isn't
+`draft`/`rejected` or has no versions yet — and reads the project back
+afterward to confirm status actually landed on `processing`, not merely
+that it changed.
+
+**Upload a project icon** — see "[`rinth project
+icon`](#rinth-project-icon-idorslug---file-path)":
+
+```sh
+curl -X PATCH "https://api.modrinth.com/v2/project/my-draft-mod/icon?ext=png" \
+  -H "Authorization: $MODRINTH_TOKEN" -H "Content-Type: image/png" \
+  --data-binary @icon.png
+```
+```sh
+rinth project icon my-draft-mod --file icon.png
+```
+
+The extension goes in the query string, not the filename or a form field —
+`rinth` infers it from `--file`'s extension so you never write `?ext=`
+yourself. Both sides send the raw image bytes as the body, never multipart.
 
 ## Commands
 
@@ -592,17 +707,21 @@ rinth project icon my-draft-modpack --file assets/icon.png
 
 Uploads a project icon: `PATCH
 https://api.modrinth.com/v2/project/{idOrSlug}/icon?ext=<ext>` with the
-**raw image bytes** as the request body (not multipart). Confirmed against
-[docs.modrinth.com's "Change project icon"](https://docs.modrinth.com/api/operations/changeprojecticon/)
-(fetched directly, method/path/params/body-type all quoted from the live
-docs) — **not exercised against a live authenticated call**, since there is
-no `MODRINTH_TOKEN` in this development environment; see "Known gaps /
-follow-ups" below and the PR body for the full account of what was and
-wasn't confirmed.
+**raw image bytes** as the request body (not multipart). **Confirmed from
+labrinth's published server source** —
+[`apps/labrinth/src/routes/v3/projects.rs:2076`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/routes/v3/projects.rs#L2076)'s
+`#[patch("/{id}/icon")] pub async fn project_icon_edit(web::Query(ext):
+web::Query<Extension>, ..., payload: web::Payload, ...)` — `ext` is a query
+param and the handler reads the body as a raw `web::Payload`, not a
+multipart form, exactly what this command sends. This upgrades the
+evidence from "the published docs say" to "labrinth's server source
+shows" — it does **not** make it live-verified: **not exercised against a
+live authenticated call**, since there is no `MODRINTH_TOKEN` in this
+development environment; see "Known gaps / follow-ups" below and the PR
+body for the full account of what was and wasn't confirmed.
 
 The extension is inferred from `--file`'s path (case-insensitive). Accepted
-extensions (and the `Content-Type` sent with each, also from the live
-docs):
+extensions (and the `Content-Type` sent with each):
 
 | Extension | Content-Type |
 | --------- | ------------ |
@@ -611,15 +730,38 @@ docs):
 | `bmp` | `image/bmp` |
 | `gif` | `image/gif` |
 | `webp` | `image/webp` |
-| `svg` | `image/svg` |
-| `svgz` | `image/svgz` |
-| `rgb` | `image/rgb` |
 
-An unsupported extension is a usage error (exit 2) naming every accepted
-extension; a missing or nonexistent `--file` is also a usage error (exit
-2), matching `publish --file`. The live docs cap the file size at 256KiB;
-this command does not pre-check that client-side — an oversized file
-surfaces as whatever error labrinth returns for it.
+**Reconciled against the server source, which is narrower than the live
+docs this table used to cite.** labrinth's own extension→`Content-Type`
+mapping —
+[`apps/labrinth/src/util/ext.rs:3-11`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/util/ext.rs#L3-L11)'s
+`get_image_content_type()`, the function
+[`apps/labrinth/src/util/img.rs:57`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/util/img.rs#L57)'s
+`upload_image_optimized()` calls to validate `ext` before ever touching the
+uploaded bytes — matches only `bmp`, `gif`, `jpeg`/`jpg`, `png`, and `webp`;
+anything else is rejected with `invalid format for image: <ext>` before
+upload. The docs-sourced table this replaced also listed `svg`, `svgz`, and
+`rgb`; the server source shows those three are **not** accepted by this
+route today — `get_image_content_type()`'s match falls through to `None`
+for all three, which the caller turns into that same rejection. This
+command's own accepted-extension list (`ICON_CONTENT_TYPES` in
+`src/client/index.ts`) still includes `svg`/`svgz`/`rgb` from the
+docs-sourced reading; that mismatch is real and is not fixed here (a
+behavior change, out of scope for a docs-only evidence upgrade) — treat the
+table above, not `ICON_CONTENT_TYPES`, as the accurate list until that's
+reconciled in code.
+
+An unsupported extension is a usage error (exit 2) naming every extension
+`ICON_CONTENT_TYPES` accepts (currently the broader, docs-sourced list —
+see the reconciliation note above); a missing or nonexistent `--file` is
+also a usage error (exit 2), matching `publish --file`. **Size cap,
+confirmed from the server source**:
+[`apps/labrinth/src/routes/v3/projects.rs:2172-2176`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/routes/v3/projects.rs#L2172-L2176)
+reads the request body through `read_limited_from_payload(&mut payload,
+262144, "Icons must be smaller than 256KiB")` — a hard 262144-byte
+(256KiB) cap enforced server-side, matching what the live docs already
+said. This command does not pre-check the size client-side — an oversized
+file surfaces as whatever error labrinth returns for it.
 
 **VERIFY BY READ-BACK.** Since there is no meaningful way to predict the
 new `icon_url` client-side, this reads the project back **both before and
@@ -784,12 +926,19 @@ no `deleteProject` method, since no rinth command needs one — same pattern as
 
 Moves a project out of `draft` via `PATCH https://api.modrinth.com/v2/project/{idOrSlug}`.
 The discipline, non-negotiable: **read first**, refuse a non-submittable
-state **by name**, PATCH, **read the project back**, and report the
-*resulting* status — never the write's own success. A read-back showing no
-status change is reported as a **failure**, not a success. This is the exact
-pattern `rinth versions delete` and `rinth servers upstream` already
-establish (see their sections above) — a live API response is never trusted
-on its own when it claims to have changed something.
+state **by name**, PATCH, **read the project back**, and verify the
+*intended* outcome — not merely *an* outcome. The read-back checks
+`after.status !== "processing"` (what this command's PATCH actually asked
+for), not just "did status change at all": a moderator changing the
+project's status between the read-first and the read-back would otherwise
+report a false success (status did change — just not to what was
+requested). A read-back that isn't `processing` is reported as a
+**failure**, not a success, naming what it actually became. This is the
+same "verify the intended outcome" discipline `rinth project edit`'s
+`staleFields()` applies to each patched field, applied here to the one
+field this command patches; `rinth versions delete` and `rinth servers
+upstream` establish the underlying "never trust a write's own status code"
+half of it (see their sections above).
 
 ```sh
 rinth project submit my-draft-mod
@@ -834,8 +983,9 @@ not that it was unsettable — a correct premise, but an inference that
 missed a branch. This is confirmed from labrinth's server source (stronger
 evidence than the OpenAPI spec, though still not a live round-trip — no
 `MODRINTH_TOKEN` in the agent environment), so the read-back still doesn't
-lean on that confirmation alone: it only requires that `status` actually
-changed from what it was before the PATCH, and reports whatever it became.
+lean on that confirmation alone: it requires that `status` actually became
+`processing` — the value this PATCH asked for — not merely that it changed
+from what it was before.
 
 **No-versions hazard, confirmed real and enforced as a pre-flight refusal**:
 [`apps/labrinth/src/routes/v3/projects.rs:616`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/routes/v3/projects.rs#L616)
@@ -1024,6 +1174,22 @@ it, and is a usage error (exit 2) if given without `--wait`. On timeout, the
 error message states plainly that the project resolved but nothing matched
 within the budget — a different message (and a different exit code) from
 "the project itself could not be read."
+
+**`--wait 0` exits 8 (`WaitTimeout`), not 7 (`NoVersionMatch`).** `--wait`
+with a budget of zero still runs the poll loop's single attempt, but that
+attempt's elapsed time (`>= 0`) is immediately `>=` the `0`-second budget,
+so a no-match falls into the "budget expired" branch rather than the
+fail-fast "nothing matched" branch — even though only one attempt ever ran,
+same as omitting `--wait` entirely. This is self-consistent and intentional,
+not a bug to fix: `--wait N` always means "the budget expired" on its
+last failed attempt, regardless of how small `N` is. It matters to a caller
+that *parameterizes* the budget (e.g. invoking this command with
+`--wait "$TIMEOUT"`) rather than hard-coding whether to wait at all —
+`TIMEOUT=0` silently switches that caller from exit 7 to exit 8 for what is
+otherwise the same single-attempt, no-match outcome as leaving `--wait` off
+altogether, so a consumer branching on exit code needs to treat 0 as its
+own case rather than assuming it degrades to the no-`--wait` path's exit
+code.
 
 Nothing is printed on any attempt but the last (success, or the final
 timeout error) — every write still goes through `src/output.ts` like every
@@ -1236,13 +1402,26 @@ into a real pipeline yet.
   API** — `test/integration/publish.integration.test.ts` is gated on
   `RINTH_TEST_PROJECT`, which is deliberately left unset.
 - **`project icon`'s request shape has never been exercised against a live
-  authenticated call either** — confirmed from the published API docs and
-  cross-checked against the vendored `@modrinth/api-client` source (see
-  "`rinth project icon`" above and the PR body for exactly what was and
-  wasn't confirmed, and how); there is no `MODRINTH_TOKEN` in this
-  development environment. `test/integration/project-icon.integration.test.ts`
+  authenticated call** — confirmed from labrinth's published server source
+  (`apps/labrinth/src/routes/v3/projects.rs:2076`, its accepted extensions
+  from `apps/labrinth/src/util/ext.rs:3-11`, and its 256KiB size cap from
+  `apps/labrinth/src/routes/v3/projects.rs:2172-2176` — see "`rinth project
+  icon`" above and the PR body for the full account), which is stronger
+  evidence than the published API docs this used to cite, but is still not
+  a live round-trip: there is no `MODRINTH_TOKEN` in this development
+  environment. `test/integration/project-icon.integration.test.ts`
   and `test/integration/project-edit.integration.test.ts` are both gated on
   `RINTH_TEST_PROJECT` like `publish`'s, which is deliberately left unset.
+- **`ICON_CONTENT_TYPES` (`src/client/index.ts:118-128`) accepts three
+  extensions labrinth's server source does not** — `svg`, `svgz`, and
+  `rgb`, carried over from the docs-sourced reading `project icon`'s
+  section above documents and reconciles. `rinth project icon <id> --file
+  logo.svg` passes rinth's own usage check and uploads, then fails at the
+  API, since `get_image_content_type()`
+  (`apps/labrinth/src/util/ext.rs:3-11`) doesn't match any of the three.
+  Fixing `ICON_CONTENT_TYPES` to the narrower, server-confirmed list
+  (`bmp`/`gif`/`jpeg`/`jpg`/`png`/`webp`) is a deliberate, deferred code
+  change — out of scope for the docs-only evidence upgrade that found it.
 - **Public reads still require `MODRINTH_TOKEN`** — there is no tokenless
   mode, even for routes the Modrinth API itself doesn't require auth for.
 - **npm publish under `@brooswit` is deferred** — it needs the

@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/). CI
 enforces that this file has a `## [<version>]` heading matching the
 `version` field in `package.json` — see README.md.
 
+## [0.9.0] - 2026-08-30
+
+Four deferred fixes held back from three otherwise-approved PRs, the epic's
+headline curl -> rinth replacement section, and a `## Known gaps /
+follow-ups` reconciliation — no new commands, one small behavioral
+correction to `project submit`'s verification.
+
+### Changed
+
+- `rinth project submit`'s read-back check now verifies the **intended**
+  outcome, not merely **an** outcome: it fails unless the read-back status
+  is exactly `processing` (what the PATCH asked for), where it previously
+  only checked that status had changed at all from before the PATCH. A
+  project whose status changed to something *other* than `processing`
+  between the pre-PATCH read and the read-back (e.g. a moderator's own
+  action landing in that window) was previously reported as a successful
+  submit; it is now correctly reported as a failure (exit 5, `ApiError`,
+  reason `"submit_unverified"` unchanged), naming the status actually
+  observed and the status intended. This is the same "verify the intended
+  outcome" discipline `project edit`'s `staleFields()` already applies to
+  each patched field, now applied consistently to `submit`'s one patched
+  field. See README "`rinth project submit`".
+
+### Fixed
+
+- `test/unit/commands/project.test.ts`'s exact-request-body assertions
+  (`project edit`'s sparse-PATCH tests, `project create`'s full-payload
+  test, and `project submit`'s PATCH-body test) now use `toStrictEqual`
+  instead of `toEqual`. `toEqual` ignores object keys whose value is
+  `undefined`, so it cannot actually catch a body carrying stray
+  `undefined`-valued keys — the exact failure these tests exist to rule
+  out. Not a live bug today (each command's body-builder only ever sets a
+  key when it has a real value, so an undefined-valued key is currently
+  unreachable), but the tests now say what they were always meant to say.
+  Assertions checking parsed-flags arrays or a single field's value (not a
+  full request body) were left as `toEqual` — they were never the ones this
+  gap applied to.
+
+### Documentation
+
+- README: documents that `rinth versions latest ... --wait 0` exits **8**
+  (`WaitTimeout`, reason `"wait_exhausted"`), not **7** (`NoVersionMatch`) —
+  a zero-second budget still runs the loop's one attempt, and that
+  attempt's elapsed time is immediately `>=` the `0`-second budget, so a
+  no-match outcome falls into "budget expired" rather than "nothing
+  matched." Behavior is unchanged; this documents an existing,
+  self-consistent fact that matters to a caller parameterizing the wait
+  budget (e.g. `--wait "$TIMEOUT"`), since `TIMEOUT=0` silently changes
+  which exit code a single failed attempt produces. See README "`rinth
+  versions latest`".
+- README: `project icon`'s request shape — `PATCH
+  /project/{id}/icon?ext=<ext>` with raw image bytes, not multipart — is
+  now confirmed from labrinth's published server source
+  (`apps/labrinth/src/routes/v3/projects.rs:2076`), upgrading it from a
+  documented "unconfirmed" gap to a cited fact. Also newly documented from
+  the same source, with citations: the accepted-extension list
+  (`apps/labrinth/src/util/ext.rs:3-11`'s `get_image_content_type()` —
+  `bmp`/`gif`/`jpeg`/`jpg`/`png`/`webp` only) and the 256KiB size cap
+  (`apps/labrinth/src/routes/v3/projects.rs:2172-2176`). The server source
+  is narrower than the docs-sourced table this replaces: `svg`/`svgz`/`rgb`
+  are not accepted by the live route, a disagreement now called out
+  explicitly rather than silently resolved either way; `ICON_CONTENT_TYPES`
+  in `src/client/index.ts` is unchanged (still the broader, docs-sourced
+  list) since correcting it is a behavior change, out of scope here. What
+  remains true and undocumented-by-this-fix: this has still never been
+  exercised against a live authenticated call — there is no
+  `MODRINTH_TOKEN` in this development environment. See README "`rinth
+  project icon`" and "Known gaps / follow-ups".
+- README: adds "From curl to rinth", a short section pairing each of the
+  six curl calls a maintainer previously hand-typed against the live API
+  (create a project, edit its metadata, read a project including a DRAFT
+  one, delete a version, submit a project for review, upload a project
+  icon) with the `rinth` command that replaces it. Flags shown match each
+  command's own `Usage:` string in the merged source.
+- README: "Known gaps / follow-ups" reviewed against current reality; the
+  `project icon` bullet's now-settled "request shape unconfirmed" claim was
+  narrowed to what's still actually true (see above). The three gaps that
+  are real, out of scope, and not to be worked around here remain
+  documented as-is: the dead v0 `reinstall` route behind `servers
+  upstream`, per-server Archon endpoints refusing a PAT with 403, and npm
+  publish under `@brooswit` deferred for the maintainer's passkey. Also
+  still documented: public reads requiring a token even where the live API
+  doesn't require it, the `RINTH_TEST_PROJECT`-gated integration tests
+  never having exercised a live write path, the byte-identical-404 finding,
+  and `project submit`'s success path never having been exercised live (and
+  why this suite never will exercise it).
+
 ## [0.8.0] - 2026-08-30
 
 Driven by the same hand-`curl`ing of Modrinth on 2026-08-29 that produced

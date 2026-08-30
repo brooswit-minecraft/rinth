@@ -429,7 +429,7 @@ describe("rinth project edit", () => {
 
     expect(code).toBe(ExitCode.Ok);
     expect(captured?.idOrSlug).toBe("my-draft-mod");
-    expect(captured?.patch).toEqual({ description: "New desc", categories: ["technology"] });
+    expect(captured?.patch).toStrictEqual({ description: "New desc", categories: ["technology"] });
   });
 
   test("each field individually lands in the sparse PATCH body and passes read-back verification", async () => {
@@ -459,7 +459,7 @@ describe("rinth project edit", () => {
       logSpy.mockRestore();
 
       expect(code).toBe(ExitCode.Ok);
-      expect(captured).toEqual(expectedPatch);
+      expect(captured).toStrictEqual(expectedPatch);
     }
   });
 
@@ -482,7 +482,7 @@ describe("rinth project edit", () => {
     rmSync(tmp, { recursive: true, force: true });
 
     expect(code).toBe(ExitCode.Ok);
-    expect(captured).toEqual({ body: "# From a file" });
+    expect(captured).toStrictEqual({ body: "# From a file" });
   });
 
   test("a missing --body-file is a usage error (exit 2)", async () => {
@@ -557,7 +557,7 @@ describe("rinth project edit", () => {
     logSpy.mockRestore();
 
     expect(code).toBe(ExitCode.Ok);
-    expect(captured).toEqual({
+    expect(captured).toStrictEqual({
       description: "New desc",
       client_side: "optional",
       categories: ["technology", "utility"],
@@ -1095,7 +1095,7 @@ describe("rinth project create", () => {
     logSpy.mockRestore();
 
     expect(code).toBe(ExitCode.Ok);
-    expect(capturedData).toEqual({
+    expect(capturedData).toStrictEqual({
       title: "My Draft Mod",
       project_type: "mod",
       slug: "my-draft-mod",
@@ -1298,7 +1298,7 @@ describe("rinth project submit", () => {
     const code = await run(["--json", "project", "submit", "my-draft-mod"], { transport });
 
     expect(code).toBe(ExitCode.Ok);
-    expect(capturedPatch).toEqual({ status: "processing" });
+    expect(capturedPatch).toStrictEqual({ status: "processing" });
     expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ id: "proj_1", slug: "my-draft-mod", status: "processing" }));
     logSpy.mockRestore();
   });
@@ -1392,6 +1392,31 @@ describe("rinth project submit", () => {
 
     expect(code).toBe(ExitCode.ApiError);
     expect(message).toContain("did not take effect");
+  });
+
+  test("a status that changed, but not to 'processing', is reported as a failure — the intended outcome, not merely an outcome", async () => {
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+    let call = 0;
+    const transport = createFakeTransport({
+      // Simulates a moderator changing the project's status between the
+      // read-first and the read-back: the status DID change, just not to
+      // what this command's PATCH asked for. The old `after.status ===
+      // before.status` check would have reported this as a success.
+      project: () =>
+        call++ === 0
+          ? fixtureProject({ status: "draft", versions: ["v1"] })
+          : fixtureProject({ status: "rejected", versions: ["v1"] }),
+    });
+
+    const code = await run(["--json", "project", "submit", "my-draft-mod"], { transport });
+    const message = String(errSpy.mock.calls[0]?.[0]);
+    errSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.ApiError);
+    const parsed = JSON.parse(message) as { error: { reason: string | null; message: string } };
+    expect(parsed.error.reason).toBe("submit_unverified");
+    expect(parsed.error.message).toContain("rejected");
+    expect(parsed.error.message).toContain("processing");
   });
 
   test("a 404 on the initial read is diagnosed rather than surfaced bare", async () => {
