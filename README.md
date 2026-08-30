@@ -553,6 +553,14 @@ don't cover either way); migrating it to the v1 content API is a follow-up,
 not done here — it would need a world id from a per-server `GET` that is
 itself 403, so it couldn't be verified live.
 
+This 404 and these 403s no longer reach a caller as bare API strings: see
+"`servers` diagnosis" below for the two sibling messages/`reason` values
+(`"servers_upstream_route_dead"`, `"servers_credential_refused"`) that
+`servers upstream`/`get`/`power`/`exec` now produce instead, and "Known
+gaps / follow-ups" for the production evidence (sickos run `33322343392`)
+that this is a live, ongoing breakage for a real caller, not just this
+research.
+
 ### `rinth servers exec <id> <command...>`
 
 Sends one console command to a server over the Archon WebSocket console API
@@ -1052,26 +1060,32 @@ pattern cannot undo. See "Known gaps / follow-ups".
 required by the API itself, but every rinth command goes through the same
 token-requiring real transport). `--loader`/`--game-version` are
 repeatable and sent as server-side filters; `--channel` (release/beta/alpha)
-is **not** a server-side filter on this endpoint, so it is applied
-client-side against the returned `version_type` field. `--limit` is
-forwarded to the API client's request and **is honored server-side**
-(confirmed empirically — undocumented on the live docs, but real), though
-the live labrinth docs do not document a `limit`/`offset` param on this
-endpoint at all — see "Notes on live-API behavior" below.
+and `--version-number <v>` are **not** server-side filters on this
+endpoint, so both are applied client-side — `--channel` against the
+returned `version_type` field, `--version-number` against `version_number`
+via exact, case-sensitive string equality (no prefix match, no semver
+range). `--limit` is forwarded to the API client's request and **is
+honored server-side** (confirmed empirically — undocumented on the live
+docs, but real), though the live labrinth docs do not document a
+`limit`/`offset` param on this endpoint at all — see "Notes on live-API
+behavior" below.
 
-**Caveat: `--limit` is applied before `--channel`.** Because `--limit` is a
-server-side page size and `--channel` is a client-side filter applied to
-whatever that page contains, combining them can return fewer rows than
-you'd expect — or none — even when matching versions exist further down
-the project's full version history. For example, `--limit 5 --channel
-release` on a project whose 5 most recent versions are all beta/alpha
-returns zero rows, even if the project has plenty of release versions
-overall. If you need a channel-filtered result, prefer omitting `--limit`
-(or set it generously) rather than assuming the two compose like two
-independent filters.
+**Caveat: `--limit` is applied before `--channel`/`--version-number`.**
+Because `--limit` is a server-side page size and `--channel`/
+`--version-number` are client-side filters applied to whatever that page
+contains, combining them can return fewer rows than you'd expect — or
+none — even when matching versions exist further down the project's full
+version history. For example, `--limit 5 --channel release` on a project
+whose 5 most recent versions are all beta/alpha returns zero rows, even if
+the project has plenty of release versions overall; the same hazard
+applies to `--limit 5 --version-number 1.2.3` if the matching version
+isn't among the 5 most recent. If you need a channel- or
+version-number-filtered result, prefer omitting `--limit` (or set it
+generously) rather than assuming these compose like independent filters.
 
 ```sh
 rinth versions list sodium --loader fabric --game-version 1.20.4 --channel release
+rinth versions list sodium --version-number 1.2.3
 ```
 
 **Human output** — an aligned table:
@@ -1110,15 +1124,24 @@ supported here** (rejected with a usage error, exit 2) — resolves to a
 single version: the newest match by `date_published` (compared as parsed
 dates, not response order — see "Notes on live-API behavior" below).
 `--limit` is deliberately excluded because it's applied server-side while
-`--channel` is applied client-side (see the caveat under `versions list`
-above): limiting the candidate set before filtering by channel could
-silently return a stale version, or no match at all, instead of the
-project's actual newest matching version. Since `versions latest` is what
-picks the version id handed to a deploy, that failure mode would be
-dangerous to allow silently.
+`--channel`/`--version-number` are applied client-side (see the caveat
+under `versions list` above): limiting the candidate set before filtering
+by channel or version number could silently return a stale version, or no
+match at all, instead of the project's actual newest matching version.
+Since `versions latest` is what picks the version id handed to a deploy,
+that failure mode would be dangerous to allow silently.
+
+`--version-number <v>` matches a version's `version_number` by exact,
+case-sensitive string equality — not a prefix, not a semver range. It
+carries the same client-side caveat as `--channel`: since it's applied
+client-side, it composes cleanly with `--channel`/`--loader`/
+`--game-version` (all client- or server-side filters narrow the same
+candidate set), but never with `--limit`, which is why `--limit` stays
+disallowed here.
 
 ```sh
 rinth versions latest sodium --loader fabric --game-version 1.20.4
+rinth versions latest sodium --version-number 1.2.3
 ```
 
 **Human output:**
@@ -1368,12 +1391,12 @@ a project whose version history you care about.
 
 ## CI recipe
 
-The deploy sequence a consumer runs in CI — resolve the newest matching
-version (waiting for a freshly-published one if it isn't visible yet), then
+The deploy sequence a consumer runs in CI — resolve the version it just
+published (waiting for it to become visible if it isn't yet), then
 re-point a server at it:
 
 ```sh
-version_id=$(rinth --json versions latest "$PROJECT" --loader "$LOADER" --wait 300 --wait-interval 15 | jq -r '.id')
+version_id=$(rinth --json versions latest "$PROJECT" --version-number "$VERSION" --loader "$LOADER" --wait 300 --wait-interval 15 | jq -r '.id')
 rinth servers upstream "$SERVER_ID" --project "$PROJECT" --version "$version_id" --restart
 ```
 
@@ -1381,6 +1404,16 @@ rinth servers upstream "$SERVER_ID" --project "$PROJECT" --version "$version_id"
 hand-rolled `curl`+`jq` retry loop wrapped around `versions latest` — a
 consumer's dispatch path that deliberately does not want to wait can still
 call it without `--wait` for the original fail-fast behavior.
+
+**`--version-number` is required here, not optional.** Without it, `--wait`
+resolves to whatever the newest version already is by `date_published` —
+on any project that already has versions, that's true on the very first
+attempt, so the wait never actually waits and this recipe can silently
+re-point a live server at the PREVIOUS version instead of the one just
+published. `--version-number "$VERSION"` (set to the exact tag CI just
+published) is what makes "no match yet" retryable (exit 7,
+`NoVersionMatch`) instead of "a match" that just happens to be wrong — see
+"Four distinguishable outcomes" below.
 
 **⚠️ The second step does not work against the live API today.** The v0
 `reinstall` route `servers upstream` calls is dead at the router — see
@@ -1391,13 +1424,32 @@ into a real pipeline yet.
 
 ## Known gaps / follow-ups
 
-- **`servers upstream` is non-functional against the live API** — the v0
-  `reinstall` route it calls is dead at the router (404 regardless of
-  credentials, server, or project); it needs migration to the v1 content
-  API (`POST /v1/servers/{id}/worlds/{world}/content`).
+- **`servers upstream` is non-functional against the live API — and this is
+  not theoretical, it is a live breakage with a real consumer failing in
+  production right now.** The v0 `reinstall` route it calls is dead at the
+  router (404 regardless of credentials, server, or project); it needs
+  migration to the v1 content API (`POST
+  /v1/servers/{id}/worlds/{world}/content`), not done here (see "Scope
+  boundary" under RINTH-14's ticket, or the PR body, for why). Production
+  evidence, attributed rather than observed from this environment (there is
+  no `MODRINTH_TOKEN` here): `brooswit-minecraft/schematic`'s
+  `.github/workflows/reusable-server-update.yml` already calls `rinth
+  servers upstream`, pinned to a pre-tag commit, in its deploy pipeline.
+  Sickos run `33322343392` (2026-08-30T16:23:59Z) shows the step "Resolve
+  published version id" succeeding and the very next step, "Update Modrinth
+  server", failing (step-level conclusions confirmed via the run API) —
+  reported (SCHEM-6, verified by RINTH-1) failing on **every** Server
+  update run since 2026-08-29T00:52, with a valid token and correct
+  `SERVER_ID`/`PROJECT_ID`/`VERSION_ID`. A caller in that position sees
+  exit 4 (`NotFound`) with `reason: "servers_upstream_route_dead"` — see
+  "`rinth servers upstream`" above and "Errors under `--json`" below for
+  what that message now says instead of a bare 404.
 - **`servers get`/`power`/`exec` require a credential Archon accepts for
   that specific server** — a PAT is refused with 403 today; only a
-  browser session token works, and there's no way to obtain one in CI.
+  browser session token works, and there's no way to obtain one in CI. A
+  caller sees exit 3 (`AuthMissing`) with `reason:
+  "servers_credential_refused"`, naming the specific server — see
+  "Authentication — what a token can and cannot do" above.
 - **The `publish` success path has never been exercised against the live
   API** — `test/integration/publish.integration.test.ts` is gated on
   `RINTH_TEST_PROJECT`, which is deliberately left unset.
@@ -1535,6 +1587,51 @@ This only ever rewrites the *message* (and sets `reason` — see below); the
 exit code, `status`, and `endpoint` are preserved exactly, so the `--json`
 error shape does not change shape.
 
+### `servers` diagnosis
+
+`servers get`, `power`, `upstream`, and `exec` route their failures through
+two sibling helpers in `src/diagnose.ts`, same file and same
+message-only/`reason`-only contract as `diagnoseNotFound` above, instead of
+letting a bare API string (e.g. `not found`, the entire output) reach the
+user. Unlike `diagnoseNotFound`'s draft-vs-nonexistent case, these two are
+**not** one outcome covering multiple candidate causes — each is uniquely
+determined by which call produced it, so naming one confidently is honest,
+not a guess:
+
+- **`diagnoseUpstreamRouteDead`** rewrites a 404 from `servers upstream`'s
+  `reinstall` call (the only thing that call ever hits). This route is
+  proven dead at the router, independent of credentials, server, or
+  project — see "`rinth servers upstream`" above — so the message names the
+  route explicitly and states the remedy is a rinth-side migration to the
+  v1 content API, not anything the caller can change. Reason:
+  `"servers_upstream_route_dead"`.
+- **`diagnoseServerCredentialRefused`** rewrites a 403 from any per-server
+  Archon endpoint (`servers get`, `power`, `exec`'s WebSocket auth, and
+  `upstream`'s post-reinstall read-back). Every one of these routes rejects
+  a PAT identically — confirmed from labrinth's published PAT scope enum
+  (there is no `SERVER`/`ARCHON`/`PYRO` scope at all, see "Authentication —
+  what a token can and cannot do" above) — so a 403 here is always the
+  identity wall, never an ownership/permissions question a different PAT
+  could fix. The message names the specific server and points at
+  "Authentication — what a token can and cannot do". Reason:
+  `"servers_credential_refused"`.
+
+`servers upstream`'s project-resolution step (`--project <slug|id>` ->
+`resolveProjectId`) is a project lookup like any other, so its 404 goes
+through the existing `diagnoseNotFound` (reason `"project_unreadable"`)
+instead of a third helper — reusing the shared helper rather than
+duplicating it, per RINTH-14. `servers list` is untouched: `GET
+/modrinth/v0/servers` is not a per-server route and is not known to be
+dead, so there is nothing here to diagnose.
+
+Because the 404 (dead route) and the 403 (identity wall) never overlap —
+different status codes, different call sites, both independently proven —
+there is no genuinely ambiguous case between them to name, unlike the
+project/version 404. If that ever stops being true (e.g. a future Archon
+change makes one of these routes 403 for a *different* reason than
+credential type), the honest answer is a new candidate-cause message, not a
+guess layered onto these two.
+
 ### Errors under `--json`
 
 Every API-backed command routes its failures through the same `CliError`,
@@ -1545,14 +1642,17 @@ and (**new**) a machine-readable `reason` string (`null` when none applies)
 so a consumer can switch on a stable string instead of memorizing exit
 codes — e.g. `"auth"`, `"project_unreadable"`, `"no_version_match"`,
 `"wait_exhausted"`, `"update_not_landed"` (`project edit`'s read-back
-verification), `"icon_not_landed"` (`project icon`'s). `reason` is purely
-additive: every other field keeps its existing name and meaning.
+verification), `"icon_not_landed"` (`project icon`'s),
+`"servers_upstream_route_dead"` (`servers upstream`'s dead v0 `reinstall`
+route), `"servers_credential_refused"` (a per-server Archon 403 — see
+"`servers` diagnosis" above). `reason` is purely additive: every other
+field keeps its existing name and meaning.
 
 - **Plain text** (`--json` not set): the stderr message includes status and
   endpoint when present, e.g.
 
   ```
-  HTTP 403 GET /modrinth/v0/servers/<id>: Forbidden
+  Server ff783f0f-ec3c-4037-b39f-452ce590891d refused this credential (HTTP 403). A labrinth PAT cannot carry per-server Archon access — this is an identity wall, not a missing PAT scope (there is no SERVER/ARCHON/PYRO scope at all). Only a browser session token works here, and there is no way to obtain one in CI. See README "Authentication — what a token can and cannot do".
   ```
 
   When neither a status nor an endpoint applies (e.g. a usage error), the
@@ -1562,7 +1662,7 @@ additive: every other field keeps its existing name and meaning.
   print) and a single JSON value is written to stderr:
 
   ```json
-  {"error":{"code":3,"status":403,"endpoint":"GET /modrinth/v0/servers/<id>","message":"HTTP 403 GET /modrinth/v0/servers/<id>: Forbidden","reason":null}}
+  {"error":{"code":3,"status":403,"endpoint":"GET /modrinth/v0/servers/ff783f0f-ec3c-4037-b39f-452ce590891d","message":"Server ff783f0f-ec3c-4037-b39f-452ce590891d refused this credential (HTTP 403). A labrinth PAT cannot carry per-server Archon access — this is an identity wall, not a missing PAT scope (there is no SERVER/ARCHON/PYRO scope at all). Only a browser session token works here, and there is no way to obtain one in CI. See README \"Authentication — what a token can and cannot do\".","reason":"servers_credential_refused"}}
   ```
 
   `code` is the process exit code (same table as above); `status` is the raw

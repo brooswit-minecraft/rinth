@@ -65,7 +65,9 @@ export interface ConsoleSocket {
  * `GET /project/{id|slug}/version` (v2). `channel` (release/beta/alpha) is
  * NOT a server-side filter on this endpoint — verified against
  * https://docs.modrinth.com — so it is applied client-side by the command,
- * not sent as a request param.
+ * not sent as a request param. Same for an exact `version_number` match
+ * (`--version-number`): labrinth has no such server-side filter either, so
+ * it is also applied client-side and deliberately has no field here.
  */
 export interface VersionFilters {
   loaders?: string[];

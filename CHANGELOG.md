@@ -10,9 +10,32 @@ enforces that this file has a `## [<version>]` heading matching the
 ## [0.9.0] - 2026-08-30
 
 Four deferred fixes held back from three otherwise-approved PRs, the epic's
-headline curl -> rinth replacement section, and a `## Known gaps /
-follow-ups` reconciliation — no new commands, one small behavioral
-correction to `project submit`'s verification.
+headline curl -> rinth replacement section, a `## Known gaps /
+follow-ups` reconciliation, and a new `versions latest`/`versions list`
+filter closing a silent-wrong-answer bug — one small behavioral correction
+to `project submit`'s verification.
+
+### Added
+
+- `rinth versions latest`/`rinth versions list` accept `--version-number
+  <v>`, an exact (case-sensitive) client-side match against a version's
+  `version_number` — labrinth has no server-side filter for this, so it is
+  applied the same way `--channel` already is. This closes a
+  silent-wrong-answer bug in `versions latest --wait`: without a way to
+  express "wait for the version whose `version_number` equals the tag I
+  just published," `versions latest --wait` on any project that already had
+  versions found `versions.length > 0` on its very first attempt and
+  returned the PREVIOUS version immediately, with exit 0 — the wait never
+  actually waited, and a caller using the obvious pattern to re-point a live
+  server at "the version I just published" could silently deploy the wrong
+  one instead. With `--version-number` set, no match now correctly produces
+  the existing `NoVersionMatch` outcome (exit 7), which `--wait` already
+  retries on — making
+  `rinth versions latest "$PROJECT" --version-number "$TAG" --wait 300
+  --wait-interval 15` a faithful replacement for a hand-rolled curl+jq
+  retry loop. Composes with `--channel`/`--loader`/`--game-version`. Carries
+  the same client-side/`--limit` caveat `--channel` already documents (see
+  README "`rinth versions latest`" and "`rinth versions list`").
 
 ### Changed
 
@@ -32,6 +55,37 @@ correction to `project submit`'s verification.
 
 ### Fixed
 
+- The `servers` family (`get`, `power`, `upstream`, `exec`) no longer lets a
+  bare Archon API string reach the user — every one of these previously
+  called `ctx.transport` with no diagnosis wrapper at all, so a 404 or 403
+  passed straight through as e.g. `not found` (exit 4), the entire output.
+  Two new sibling functions in `src/diagnose.ts`, alongside the existing
+  `diagnoseNotFound`: `diagnoseUpstreamRouteDead` rewrites a 404 from
+  `servers upstream`'s `reinstall` call to name the known-dead v0 route
+  explicitly and say the remedy is a rinth-side migration to the v1 content
+  API, not anything the caller can change (reason
+  `"servers_upstream_route_dead"`); `diagnoseServerCredentialRefused`
+  rewrites a 403 from any per-server Archon endpoint (`get`, `power`,
+  `exec`'s WebSocket auth, and `upstream`'s post-reinstall read-back) to
+  name the specific server and state that a PAT cannot carry per-server
+  Archon access, pointing at README "Authentication — what a token can and
+  cannot do" (reason `"servers_credential_refused"`). `servers upstream`'s
+  project-resolution step now also routes its 404 through the existing
+  `diagnoseNotFound` (reason `"project_unreadable"`, unchanged), the same
+  project-lookup helper `project get`/`versions list`/`versions
+  latest`/`publish` already use — reused, not duplicated. All three
+  `reason` strings are distinct because CI branches on them; `servers
+  list` is unaffected (`GET /modrinth/v0/servers` is not a per-server
+  route and is not known to be dead). Unlike `diagnoseNotFound`'s
+  draft-vs-nonexistent case, none of these three is a genuine ambiguity:
+  each is uniquely determined by which call produced it (the `reinstall`
+  endpoint only ever 404s at the router; every per-server Archon endpoint
+  only ever 403s on identity, never on scope, since no PAT scope for it
+  exists at all) — so, honestly, there was no ambiguous case to add a third
+  path for here. `diagnoseNotFound`'s own three existing callers are
+  unchanged and their tests still pass unmodified. See README "`rinth
+  servers upstream`", "Authentication — what a token can and cannot do",
+  and "404 diagnosis".
 - `test/unit/commands/project.test.ts`'s exact-request-body assertions
   (`project edit`'s sparse-PATCH tests, `project create`'s full-payload
   test, and `project submit`'s PATCH-body test) now use `toStrictEqual`
@@ -81,6 +135,23 @@ correction to `project submit`'s verification.
   one, delete a version, submit a project for review, upload a project
   icon) with the `rinth` command that replaces it. Flags shown match each
   command's own `Usage:` string in the merged source.
+- README: "Known gaps / follow-ups"' `servers upstream` bullet is upgraded
+  from a theoretical "this route 404s regardless of credentials" claim to
+  cited production evidence: `brooswit-minecraft/schematic`'s
+  `.github/workflows/reusable-server-update.yml` already calls `rinth
+  servers upstream` (pinned to a pre-tag commit), and sickos run
+  `33322343392` (2026-08-30T16:23:59Z) shows its "Resolve published version
+  id" step succeeding while "Update Modrinth server" fails — reported (per
+  SCHEM-6, verified by RINTH-1) failing on every Server update run since
+  2026-08-29T00:52 with a valid token and correct
+  `SERVER_ID`/`PROJECT_ID`/`VERSION_ID`, surfacing as exit 4 / `NotFound`.
+  This is attributed evidence, not something exercised from this
+  environment — there is no `MODRINTH_TOKEN` here, and per-server Archon
+  routes cannot be reached from this environment even with one. The bullet
+  also now cross-references the new `"servers_upstream_route_dead"` /
+  `"servers_credential_refused"` reasons above it, so a reader lands on the
+  legible message the same live failure now produces instead of the
+  bare string it used to.
 - README: "Known gaps / follow-ups" reviewed against current reality; the
   `project icon` bullet's now-settled "request shape unconfirmed" claim was
   narrowed to what's still actually true (see above). The three gaps that

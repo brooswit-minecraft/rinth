@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { diagnoseNotFound, NOT_FOUND_REASON } from "../../src/diagnose.ts";
+import {
+  diagnoseNotFound,
+  diagnoseServerCredentialRefused,
+  diagnoseUpstreamRouteDead,
+  NOT_FOUND_REASON,
+  SERVER_CREDENTIAL_REFUSED_REASON,
+  UPSTREAM_ROUTE_DEAD_REASON,
+} from "../../src/diagnose.ts";
 import { CliError, ExitCode } from "../../src/errors.ts";
 
 describe("diagnoseNotFound", () => {
@@ -60,5 +67,111 @@ describe("diagnoseNotFound", () => {
     // diagnoseNotFound never echoes the original message back in — it
     // replaces it entirely with a fixed, static explanation.
     expect(diagnosed.message).not.toContain("mrp_leaked_token_value");
+  });
+});
+
+describe("diagnoseUpstreamRouteDead", () => {
+  const ENDPOINT = "POST /modrinth/v0/servers/srv_123/reinstall";
+
+  test("rewrites a 404 CliError's message to name the dead v0 reinstall route and the rinth-side remedy", () => {
+    const original = new CliError("Not Found", ExitCode.NotFound, { status: 404, endpoint: ENDPOINT });
+
+    const diagnosed = diagnoseUpstreamRouteDead(original);
+
+    expect(diagnosed.message).toContain("reinstall");
+    expect(diagnosed.message).toContain("dead at the router");
+    expect(diagnosed.message).toContain("independent of credentials");
+    expect(diagnosed.message).toContain("rinth-side migration");
+    expect(diagnosed.message).not.toMatch(/^Not Found$/);
+  });
+
+  test("preserves exitCode/status/endpoint exactly", () => {
+    const original = new CliError("Not Found", ExitCode.NotFound, { status: 404, endpoint: ENDPOINT });
+
+    const diagnosed = diagnoseUpstreamRouteDead(original);
+
+    expect(diagnosed.exitCode).toBe(ExitCode.NotFound);
+    expect(diagnosed.status).toBe(404);
+    expect(diagnosed.endpoint).toBe(ENDPOINT);
+  });
+
+  test("sets a stable machine-readable reason, distinct from diagnoseNotFound's and diagnoseServerCredentialRefused's", () => {
+    const original = new CliError("Not Found", ExitCode.NotFound, { status: 404, endpoint: ENDPOINT });
+    expect(diagnoseUpstreamRouteDead(original).reason).toBe(UPSTREAM_ROUTE_DEAD_REASON);
+    expect(UPSTREAM_ROUTE_DEAD_REASON).not.toBe(NOT_FOUND_REASON);
+    expect(UPSTREAM_ROUTE_DEAD_REASON).not.toBe(SERVER_CREDENTIAL_REFUSED_REASON);
+  });
+
+  test("passes through any non-404 error unchanged", () => {
+    const forbidden = new CliError("Forbidden", ExitCode.AuthMissing, { status: 403, endpoint: ENDPOINT });
+    expect(diagnoseUpstreamRouteDead(forbidden)).toBe(forbidden);
+
+    const usage = new CliError("bad args", ExitCode.Usage);
+    expect(diagnoseUpstreamRouteDead(usage)).toBe(usage);
+
+    const serverError = new CliError("boom", ExitCode.ApiError, { status: 500, endpoint: ENDPOINT });
+    expect(diagnoseUpstreamRouteDead(serverError)).toBe(serverError);
+  });
+
+  test("never leaks a token embedded in the original message (redaction proof)", () => {
+    const original = new CliError("Not Found: Bearer mrp_leaked_token_value", ExitCode.NotFound, {
+      status: 404,
+      endpoint: ENDPOINT,
+    });
+
+    expect(diagnoseUpstreamRouteDead(original).message).not.toContain("mrp_leaked_token_value");
+  });
+});
+
+describe("diagnoseServerCredentialRefused", () => {
+  const ENDPOINT = "GET /modrinth/v0/servers/srv_123";
+
+  test("rewrites a 403 CliError's message to name the server and the PAT identity wall", () => {
+    const original = new CliError("Forbidden", ExitCode.AuthMissing, { status: 403, endpoint: ENDPOINT });
+
+    const diagnosed = diagnoseServerCredentialRefused(original, "srv_123");
+
+    expect(diagnosed.message).toContain("srv_123");
+    expect(diagnosed.message).toContain("403");
+    expect(diagnosed.message).toContain("PAT");
+    expect(diagnosed.message).toContain("identity wall");
+    expect(diagnosed.message).not.toMatch(/^Forbidden$/);
+  });
+
+  test("preserves exitCode/status/endpoint exactly", () => {
+    const original = new CliError("Forbidden", ExitCode.AuthMissing, { status: 403, endpoint: ENDPOINT });
+
+    const diagnosed = diagnoseServerCredentialRefused(original, "srv_123");
+
+    expect(diagnosed.exitCode).toBe(ExitCode.AuthMissing);
+    expect(diagnosed.status).toBe(403);
+    expect(diagnosed.endpoint).toBe(ENDPOINT);
+  });
+
+  test("sets a stable machine-readable reason, distinct from the other diagnose reasons", () => {
+    const original = new CliError("Forbidden", ExitCode.AuthMissing, { status: 403, endpoint: ENDPOINT });
+    expect(diagnoseServerCredentialRefused(original, "srv_123").reason).toBe(SERVER_CREDENTIAL_REFUSED_REASON);
+    expect(SERVER_CREDENTIAL_REFUSED_REASON).not.toBe(NOT_FOUND_REASON);
+    expect(SERVER_CREDENTIAL_REFUSED_REASON).not.toBe(UPSTREAM_ROUTE_DEAD_REASON);
+  });
+
+  test("passes through any non-403 error unchanged", () => {
+    const notFound = new CliError("Not Found", ExitCode.NotFound, { status: 404, endpoint: ENDPOINT });
+    expect(diagnoseServerCredentialRefused(notFound, "srv_123")).toBe(notFound);
+
+    const usage = new CliError("bad args", ExitCode.Usage);
+    expect(diagnoseServerCredentialRefused(usage, "srv_123")).toBe(usage);
+
+    const serverError = new CliError("boom", ExitCode.ApiError, { status: 500, endpoint: ENDPOINT });
+    expect(diagnoseServerCredentialRefused(serverError, "srv_123")).toBe(serverError);
+  });
+
+  test("never leaks a token embedded in the original message (redaction proof)", () => {
+    const original = new CliError("Forbidden: Bearer mrp_leaked_token_value", ExitCode.AuthMissing, {
+      status: 403,
+      endpoint: ENDPOINT,
+    });
+
+    expect(diagnoseServerCredentialRefused(original, "srv_123").message).not.toContain("mrp_leaked_token_value");
   });
 });

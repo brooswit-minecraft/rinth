@@ -6,6 +6,8 @@
 // endpoint (verified against https://docs.modrinth.com and the
 // `@modrinth/api-client` request-building code, which never sends it) so
 // it is applied client-side against the returned `version_type` field.
+// `--version-number` (exact match) is the same story: no such server-side
+// filter exists, so it too is applied client-side, against `version_number`.
 //
 // The live API empirically returns versions pre-sorted descending by
 // `date_published` (checked against a real project), but this is not a
@@ -38,13 +40,16 @@ export const DEFAULT_WAIT_INTERVAL_SECONDS = 15;
 
 const USAGE =
   "Usage: rinth versions <list|latest|delete> <project|version_id> [--loader <l>] [--game-version <gv>] " +
-  "[--channel release|beta|alpha] [--limit <n>] [latest only: --wait <seconds> [--wait-interval <seconds>]]";
+  "[--channel release|beta|alpha] [--version-number <v>] [--limit <n>] " +
+  "[latest only: --wait <seconds> [--wait-interval <seconds>]]";
 
 export interface VersionsFlags {
   project: string;
   loaders: string[];
   gameVersions: string[];
   channel?: VersionChannel;
+  /** Exact, case-sensitive match against a version's `version_number` — applied client-side, same as `channel`. See `fetchMatchingVersions`. */
+  versionNumber?: string;
   limit?: number;
   /** `latest` only: total polling budget in seconds. Absent means the original fail-fast behavior (exactly one attempt). */
   wait?: number;
@@ -53,7 +58,7 @@ export interface VersionsFlags {
 }
 
 export interface ParseVersionsFlagsOptions {
-  /** `versions latest` doesn't support --limit: it's server-side while --channel is client-side, so limiting before filtering can silently return a stale/no match. */
+  /** `versions latest` doesn't support --limit: it's server-side while --channel/--version-number are client-side, so limiting before filtering can silently return a stale/no match. */
   allowLimit?: boolean;
   /** Only `versions latest` accepts `--wait`/`--wait-interval` — `versions list` has no notion of "waiting for a match". */
   allowWait?: boolean;
@@ -67,6 +72,7 @@ export function parseVersionsFlags(args: string[], options: ParseVersionsFlagsOp
   const gameVersions: string[] = [];
   const positional: string[] = [];
   let channel: string | undefined;
+  let versionNumber: string | undefined;
   let limit: number | undefined;
   let wait: number | undefined;
   let waitInterval: number | undefined;
@@ -91,6 +97,12 @@ export function parseVersionsFlags(args: string[], options: ParseVersionsFlagsOp
         throw new CliError("Usage: --channel requires a value", ExitCode.Usage);
       }
       channel = value;
+    } else if (arg === "--version-number") {
+      const value = args[++i];
+      if (value === undefined) {
+        throw new CliError("Usage: --version-number requires a value", ExitCode.Usage);
+      }
+      versionNumber = value;
     } else if (arg === "--limit") {
       if (!allowLimit) {
         throw new CliError("Usage: rinth versions latest does not support --limit", ExitCode.Usage);
@@ -158,6 +170,7 @@ export function parseVersionsFlags(args: string[], options: ParseVersionsFlagsOp
     loaders,
     gameVersions,
     channel: channel as VersionChannel | undefined,
+    versionNumber,
     limit,
     wait,
     waitInterval,
@@ -183,7 +196,10 @@ async function fetchMatchingVersions(
   ctx: CommandContext,
 ): Promise<Labrinth.Versions.v2.Version[]> {
   const versions = await ctx.transport.listVersions(flags.project, toVersionFilters(flags));
-  return flags.channel ? versions.filter((v) => v.version_type === flags.channel) : versions;
+  const byChannel = flags.channel ? versions.filter((v) => v.version_type === flags.channel) : versions;
+  return flags.versionNumber !== undefined
+    ? byChannel.filter((v) => v.version_number === flags.versionNumber)
+    : byChannel;
 }
 
 /**
