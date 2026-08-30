@@ -10,9 +10,32 @@ enforces that this file has a `## [<version>]` heading matching the
 ## [0.9.0] - 2026-08-30
 
 Four deferred fixes held back from three otherwise-approved PRs, the epic's
-headline curl -> rinth replacement section, and a `## Known gaps /
-follow-ups` reconciliation — no new commands, one small behavioral
-correction to `project submit`'s verification.
+headline curl -> rinth replacement section, a `## Known gaps /
+follow-ups` reconciliation, and a new `versions latest`/`versions list`
+filter closing a silent-wrong-answer bug — one small behavioral correction
+to `project submit`'s verification.
+
+### Added
+
+- `rinth versions latest`/`rinth versions list` accept `--version-number
+  <v>`, an exact (case-sensitive) client-side match against a version's
+  `version_number` — labrinth has no server-side filter for this, so it is
+  applied the same way `--channel` already is. This closes a
+  silent-wrong-answer bug in `versions latest --wait`: without a way to
+  express "wait for the version whose `version_number` equals the tag I
+  just published," `versions latest --wait` on any project that already had
+  versions found `versions.length > 0` on its very first attempt and
+  returned the PREVIOUS version immediately, with exit 0 — the wait never
+  actually waited, and a caller using the obvious pattern to re-point a live
+  server at "the version I just published" could silently deploy the wrong
+  one instead. With `--version-number` set, no match now correctly produces
+  the existing `NoVersionMatch` outcome (exit 7), which `--wait` already
+  retries on — making
+  `rinth versions latest "$PROJECT" --version-number "$TAG" --wait 300
+  --wait-interval 15` a faithful replacement for a hand-rolled curl+jq
+  retry loop. Composes with `--channel`/`--loader`/`--game-version`. Carries
+  the same client-side/`--limit` caveat `--channel` already documents (see
+  README "`rinth versions latest`" and "`rinth versions list`").
 
 ### Changed
 

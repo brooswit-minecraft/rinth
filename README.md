@@ -1052,26 +1052,32 @@ pattern cannot undo. See "Known gaps / follow-ups".
 required by the API itself, but every rinth command goes through the same
 token-requiring real transport). `--loader`/`--game-version` are
 repeatable and sent as server-side filters; `--channel` (release/beta/alpha)
-is **not** a server-side filter on this endpoint, so it is applied
-client-side against the returned `version_type` field. `--limit` is
-forwarded to the API client's request and **is honored server-side**
-(confirmed empirically — undocumented on the live docs, but real), though
-the live labrinth docs do not document a `limit`/`offset` param on this
-endpoint at all — see "Notes on live-API behavior" below.
+and `--version-number <v>` are **not** server-side filters on this
+endpoint, so both are applied client-side — `--channel` against the
+returned `version_type` field, `--version-number` against `version_number`
+via exact, case-sensitive string equality (no prefix match, no semver
+range). `--limit` is forwarded to the API client's request and **is
+honored server-side** (confirmed empirically — undocumented on the live
+docs, but real), though the live labrinth docs do not document a
+`limit`/`offset` param on this endpoint at all — see "Notes on live-API
+behavior" below.
 
-**Caveat: `--limit` is applied before `--channel`.** Because `--limit` is a
-server-side page size and `--channel` is a client-side filter applied to
-whatever that page contains, combining them can return fewer rows than
-you'd expect — or none — even when matching versions exist further down
-the project's full version history. For example, `--limit 5 --channel
-release` on a project whose 5 most recent versions are all beta/alpha
-returns zero rows, even if the project has plenty of release versions
-overall. If you need a channel-filtered result, prefer omitting `--limit`
-(or set it generously) rather than assuming the two compose like two
-independent filters.
+**Caveat: `--limit` is applied before `--channel`/`--version-number`.**
+Because `--limit` is a server-side page size and `--channel`/
+`--version-number` are client-side filters applied to whatever that page
+contains, combining them can return fewer rows than you'd expect — or
+none — even when matching versions exist further down the project's full
+version history. For example, `--limit 5 --channel release` on a project
+whose 5 most recent versions are all beta/alpha returns zero rows, even if
+the project has plenty of release versions overall; the same hazard
+applies to `--limit 5 --version-number 1.2.3` if the matching version
+isn't among the 5 most recent. If you need a channel- or
+version-number-filtered result, prefer omitting `--limit` (or set it
+generously) rather than assuming these compose like independent filters.
 
 ```sh
 rinth versions list sodium --loader fabric --game-version 1.20.4 --channel release
+rinth versions list sodium --version-number 1.2.3
 ```
 
 **Human output** — an aligned table:
@@ -1110,15 +1116,24 @@ supported here** (rejected with a usage error, exit 2) — resolves to a
 single version: the newest match by `date_published` (compared as parsed
 dates, not response order — see "Notes on live-API behavior" below).
 `--limit` is deliberately excluded because it's applied server-side while
-`--channel` is applied client-side (see the caveat under `versions list`
-above): limiting the candidate set before filtering by channel could
-silently return a stale version, or no match at all, instead of the
-project's actual newest matching version. Since `versions latest` is what
-picks the version id handed to a deploy, that failure mode would be
-dangerous to allow silently.
+`--channel`/`--version-number` are applied client-side (see the caveat
+under `versions list` above): limiting the candidate set before filtering
+by channel or version number could silently return a stale version, or no
+match at all, instead of the project's actual newest matching version.
+Since `versions latest` is what picks the version id handed to a deploy,
+that failure mode would be dangerous to allow silently.
+
+`--version-number <v>` matches a version's `version_number` by exact,
+case-sensitive string equality — not a prefix, not a semver range. It
+carries the same client-side caveat as `--channel`: since it's applied
+client-side, it composes cleanly with `--channel`/`--loader`/
+`--game-version` (all client- or server-side filters narrow the same
+candidate set), but never with `--limit`, which is why `--limit` stays
+disallowed here.
 
 ```sh
 rinth versions latest sodium --loader fabric --game-version 1.20.4
+rinth versions latest sodium --version-number 1.2.3
 ```
 
 **Human output:**
@@ -1368,12 +1383,12 @@ a project whose version history you care about.
 
 ## CI recipe
 
-The deploy sequence a consumer runs in CI — resolve the newest matching
-version (waiting for a freshly-published one if it isn't visible yet), then
+The deploy sequence a consumer runs in CI — resolve the version it just
+published (waiting for it to become visible if it isn't yet), then
 re-point a server at it:
 
 ```sh
-version_id=$(rinth --json versions latest "$PROJECT" --loader "$LOADER" --wait 300 --wait-interval 15 | jq -r '.id')
+version_id=$(rinth --json versions latest "$PROJECT" --version-number "$VERSION" --loader "$LOADER" --wait 300 --wait-interval 15 | jq -r '.id')
 rinth servers upstream "$SERVER_ID" --project "$PROJECT" --version "$version_id" --restart
 ```
 
@@ -1381,6 +1396,16 @@ rinth servers upstream "$SERVER_ID" --project "$PROJECT" --version "$version_id"
 hand-rolled `curl`+`jq` retry loop wrapped around `versions latest` — a
 consumer's dispatch path that deliberately does not want to wait can still
 call it without `--wait` for the original fail-fast behavior.
+
+**`--version-number` is required here, not optional.** Without it, `--wait`
+resolves to whatever the newest version already is by `date_published` —
+on any project that already has versions, that's true on the very first
+attempt, so the wait never actually waits and this recipe can silently
+re-point a live server at the PREVIOUS version instead of the one just
+published. `--version-number "$VERSION"` (set to the exact tag CI just
+published) is what makes "no match yet" retryable (exit 7,
+`NoVersionMatch`) instead of "a match" that just happens to be wrong — see
+"Four distinguishable outcomes" below.
 
 **⚠️ The second step does not work against the live API today.** The v0
 `reinstall` route `servers upstream` calls is dead at the router — see

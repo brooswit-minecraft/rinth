@@ -55,6 +55,16 @@ describe("parseVersionsFlags", () => {
     expect(flags.limit).toBe(5);
   });
 
+  test("parses --version-number as a single value", () => {
+    const flags = parseVersionsFlags(["sodium", "--version-number", "1.2.3"]);
+    expect(flags.versionNumber).toBe("1.2.3");
+  });
+
+  test("--version-number is undefined when not given", () => {
+    const flags = parseVersionsFlags(["sodium"]);
+    expect(flags.versionNumber).toBeUndefined();
+  });
+
   test("rejects an invalid --channel with a usage error (exit 2)", () => {
     expect(() => parseVersionsFlags(["sodium", "--channel", "bogus"])).toThrow();
     try {
@@ -74,7 +84,7 @@ describe("parseVersionsFlags", () => {
     }
   });
 
-  test.each(["--loader", "--game-version", "--channel", "--limit"])(
+  test.each(["--loader", "--game-version", "--channel", "--version-number", "--limit"])(
     "rejects %s with no following value as a usage error (exit 2)",
     (flag) => {
       try {
@@ -353,6 +363,30 @@ describe("rinth versions list", () => {
     expect(printed[0]?.id).toBe("beta-one");
   });
 
+  test("--version-number filters client-side and is not sent to the transport", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    let captured: VersionFilters | undefined;
+    const transport = createFakeTransport({
+      versions: [
+        fixtureVersion({ id: "v1", version_number: "1.0.0" }),
+        fixtureVersion({ id: "v2", version_number: "2.0.0" }),
+      ],
+      onListVersions: (_project, filters) => {
+        captured = filters;
+      },
+    });
+
+    const code = await run(["--json", "versions", "list", "sodium", "--version-number", "2.0.0"], { transport });
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(captured).toEqual({});
+    const printed = JSON.parse(String(logSpy.mock.calls[0]?.[0])) as Labrinth.Versions.v2.Version[];
+    logSpy.mockRestore();
+
+    expect(printed).toHaveLength(1);
+    expect(printed[0]?.id).toBe("v2");
+  });
+
   test("bad --channel is a usage error (exit 2)", async () => {
     const errSpy = spyOn(console, "error").mockImplementation(() => {});
     const transport = createFakeTransport();
@@ -438,6 +472,109 @@ describe("rinth versions latest", () => {
 
     expect(code).toBe(ExitCode.NoVersionMatch);
     errSpy.mockRestore();
+  });
+
+  describe("--version-number (RINTH-13: closes the silent-wrong-answer bug)", () => {
+    test("an exact version_number match is returned", async () => {
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
+      const wanted = fixtureVersion({ id: "wanted", version_number: "1.2.3" });
+      const transport = createFakeTransport({ versions: [wanted] });
+
+      const code = await run(["versions", "latest", "sodium", "--version-number", "1.2.3"], { transport });
+
+      expect(code).toBe(ExitCode.Ok);
+      expect(logSpy).toHaveBeenCalledWith("wanted  1.2.3");
+      logSpy.mockRestore();
+    });
+
+    // Pins RINTH-13: before this flag existed, `versions latest` on a
+    // project that already has versions found `versions.length > 0` on
+    // attempt 1 and returned the PREVIOUS version immediately, silently,
+    // with exit 0. If the client-side version_number filter above is ever
+    // deleted, this test must fail — it does not merely check "no match",
+    // it checks that the WRONG version is never returned instead.
+    test("a project WITH existing versions, none matching the requested version_number, exits 7 and never returns a different version (pins the silent-wrong-answer regression)", async () => {
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
+      const previous = fixtureVersion({ id: "previous", version_number: "1.2.2" });
+      const transport = createFakeTransport({ versions: [previous] });
+
+      const code = await run(["versions", "latest", "sodium", "--version-number", "1.2.3"], { transport });
+
+      expect(code).toBe(ExitCode.NoVersionMatch);
+      expect(code).not.toBe(ExitCode.NotFound);
+      // The point of this test: no version is EVER printed — in particular
+      // not `previous`, which is what the pre-fix bug would have returned.
+      expect(logSpy).not.toHaveBeenCalled();
+      errSpy.mockRestore();
+      logSpy.mockRestore();
+    });
+
+    test("--wait retries until the exact version_number appears, then succeeds", async () => {
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
+      const clock = createFakeClock();
+      const previous = fixtureVersion({ id: "previous", version_number: "1.2.2" });
+      const published = fixtureVersion({ id: "published", version_number: "1.2.3" });
+      const fixtures: Parameters<typeof createFakeTransport>[0] = { versions: [previous] };
+      let attempts = 0;
+      fixtures.onListVersions = () => {
+        attempts++;
+        if (attempts === 3) {
+          fixtures.versions = [previous, published];
+        }
+      };
+      const transport = createFakeTransport(fixtures);
+
+      const code = await run(
+        ["versions", "latest", "sodium", "--version-number", "1.2.3", "--wait", "60", "--wait-interval", "10"],
+        { transport, clock },
+      );
+
+      expect(code).toBe(ExitCode.Ok);
+      expect(attempts).toBe(3);
+      expect(logSpy).toHaveBeenCalledWith("published  1.2.3");
+      logSpy.mockRestore();
+    });
+
+    test("--version-number composes with --channel and --loader: all predicates apply together", async () => {
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
+      // `--loader` is forwarded server-side (asserted via `captured` below —
+      // the fake transport, like the real one, does not filter by it
+      // itself), while `--channel`/`--version-number` are applied
+      // client-side by `fetchMatchingVersions`. This fixture set proves the
+      // client-side pair compose correctly with each other.
+      const wrongNumber = fixtureVersion({ id: "wrong-number", version_number: "9.9.9", version_type: "release" });
+      const wrongChannel = fixtureVersion({ id: "wrong-channel", version_number: "1.2.3", version_type: "beta" });
+      const match = fixtureVersion({ id: "match", version_number: "1.2.3", version_type: "release" });
+      let captured: { project: string; filters: VersionFilters | undefined } | undefined;
+      const transport = createFakeTransport({
+        versions: [wrongNumber, wrongChannel, match],
+        onListVersions: (project, filters) => {
+          captured = { project, filters };
+        },
+      });
+
+      const code = await run(
+        [
+          "--json",
+          "versions",
+          "latest",
+          "sodium",
+          "--version-number",
+          "1.2.3",
+          "--channel",
+          "release",
+          "--loader",
+          "fabric",
+        ],
+        { transport },
+      );
+
+      expect(code).toBe(ExitCode.Ok);
+      expect(logSpy).toHaveBeenCalledWith(JSON.stringify(match));
+      expect(captured).toEqual({ project: "sodium", filters: { loaders: ["fabric"] } });
+      logSpy.mockRestore();
+    });
   });
 
   test("--limit is rejected with a usage error (exit 2): --limit is server-side, --channel is client-side, so limiting first can silently return a stale or missing match", async () => {
