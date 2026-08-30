@@ -40,7 +40,7 @@ import {
 } from "@modrinth/api-client";
 import type { Archon, AuthConfig, Labrinth } from "@modrinth/api-client";
 import { requireToken } from "../auth.ts";
-import { CliError, exitCodeForApiError } from "../errors.ts";
+import { CliError, ExitCode, exitCodeForApiError } from "../errors.ts";
 import type {
   ConsoleSocket,
   CreateVersionFile,
@@ -75,7 +75,10 @@ export function toCliError(error: unknown, endpoint?: string): CliError {
   if (status !== null && endpoint) {
     message = `HTTP ${status} ${endpoint}: ${message}`;
   }
-  return new CliError(message, exitCode, { status, endpoint: endpoint ?? null });
+  // RINTH-6/RINTH-2: token-absent-or-rejected is one machine-readable
+  // outcome ("auth") regardless of which of 401/403 the API returned.
+  const reason = exitCode === ExitCode.AuthMissing ? "auth" : null;
+  return new CliError(message, exitCode, { status, endpoint: endpoint ?? null, reason });
 }
 
 async function call<T>(fn: () => Promise<T>, endpoint: string): Promise<T> {
@@ -266,5 +269,16 @@ export function createRealTransport(): Transport {
 
     createVersion: (data: CreateVersionRequest, file: CreateVersionFile) =>
       call(() => createVersionRaw(token, data, file), "POST /v2/version"),
+
+    getVersion: (id: string) =>
+      call(() => client.labrinth.versions_v2.getVersion(id), `GET /v2/version/${encodeURIComponent(id)}`),
+
+    // `versions_v2.deleteVersion()` resolves on a 2xx; on the live API's
+    // documented 404-on-success quirk it throws instead, same as every
+    // other failed call here — the command layer (`versions delete`) is
+    // what decides whether that 404 means the delete actually happened,
+    // via a read-back, not this transport method.
+    deleteVersion: (id: string) =>
+      call(() => client.labrinth.versions_v2.deleteVersion(id), `DELETE /v2/version/${encodeURIComponent(id)}`),
   };
 }

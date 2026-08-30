@@ -4,6 +4,7 @@
 // exit code (see errors.ts's exitCodeForApiError, which the real transport
 // uses to build these same CliErrors from a live HTTP status).
 
+import type { Clock } from "../clock.ts";
 import { CliError, type CliErrorOptions, type ExitCode } from "../errors.ts";
 import type { Archon, Labrinth } from "@modrinth/api-client";
 import type {
@@ -45,6 +46,19 @@ export interface FakeTransportFixtures {
   createVersionError?: CliError;
   /** Called synchronously with the exact args `createVersion` received, so tests can assert the upload was (or wasn't) attempted, e.g. on the duplicate-version and --dry-run paths. */
   onCreateVersion?: (data: CreateVersionRequest, file: CreateVersionFile) => void;
+  /**
+   * `getVersion`'s result/error. A function lets tests change the answer
+   * across calls (e.g. `versions delete`'s read-back: present, then gone),
+   * a bare value/error is a fixed answer for every call.
+   */
+  version?: Labrinth.Versions.v2.Version | (() => Labrinth.Versions.v2.Version);
+  versionError?: CliError | (() => CliError);
+  /** Called synchronously with the exact id `getVersion` received. */
+  onGetVersion?: (id: string) => void;
+  /** `deleteVersion`'s error, if it should throw (e.g. the live API's 404-on-success). Omit for a bare 2xx (resolves with no error). */
+  deleteVersionError?: CliError | (() => CliError);
+  /** Called synchronously with the exact id `deleteVersion` received. */
+  onDeleteVersion?: (id: string) => void;
 }
 
 export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Transport {
@@ -141,6 +155,26 @@ export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Trans
       }
       return fixtures.createdVersion;
     },
+
+    async getVersion(id) {
+      fixtures.onGetVersion?.(id);
+      if (fixtures.versionError) {
+        throw typeof fixtures.versionError === "function" ? fixtures.versionError() : fixtures.versionError;
+      }
+      if (!fixtures.version) {
+        throw new Error("createFakeTransport: no `version` fixture provided");
+      }
+      return typeof fixtures.version === "function" ? fixtures.version() : fixtures.version;
+    },
+
+    async deleteVersion(id) {
+      fixtures.onDeleteVersion?.(id);
+      if (fixtures.deleteVersionError) {
+        throw typeof fixtures.deleteVersionError === "function"
+          ? fixtures.deleteVersionError()
+          : fixtures.deleteVersionError;
+      }
+    },
   };
 }
 
@@ -209,4 +243,29 @@ export function createFakeConsoleSocket(): FakeConsoleSocket {
 /** Build a CliError as the real transport would for a given HTTP failure. */
 export function apiError(exitCode: ExitCode, message = "simulated API error", options?: CliErrorOptions): CliError {
   return new CliError(message, exitCode, options);
+}
+
+/**
+ * A `Clock` fake for `versions latest --wait`: `sleep()` advances the
+ * virtual clock by exactly the requested duration and resolves on the next
+ * microtask (no real timer), so a multi-attempt wait loop runs the same
+ * budget/elapsed-time arithmetic as production but completes instantly and
+ * offline. `advance()` lets a test move time without going through `sleep`
+ * (e.g. to simulate an attempt itself taking time).
+ */
+export interface FakeClock extends Clock {
+  advance(ms: number): void;
+}
+
+export function createFakeClock(startMs = 0): FakeClock {
+  let current = startMs;
+  return {
+    now: () => current,
+    async sleep(ms: number) {
+      current += ms;
+    },
+    advance(ms: number) {
+      current += ms;
+    },
+  };
 }

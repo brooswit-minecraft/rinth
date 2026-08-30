@@ -104,6 +104,7 @@ describe("run", () => {
           status: 403,
           endpoint: "GET /modrinth/v0/servers/srv_123",
           message: "HTTP 403 GET /modrinth/v0/servers/srv_123: Forbidden",
+          reason: null,
         },
       });
       logSpy.mockRestore();
