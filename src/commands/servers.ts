@@ -1,8 +1,34 @@
+import type { Archon } from "@modrinth/api-client";
 import type { PowerAction, ServerDetail } from "../client/index.ts";
+import { diagnoseNotFound, diagnoseServerCredentialRefused, diagnoseUpstreamRouteDead } from "../diagnose.ts";
 import { CliError, ExitCode } from "../errors.ts";
 import { printHuman, printJson } from "../output.ts";
 import { registerSecret } from "../redact.ts";
 import type { Command, CommandContext } from "./types.ts";
+
+/** Runs `getServer`, rewriting a 403 (per-server Archon identity wall) via `diagnoseServerCredentialRefused`. */
+async function getServerDiagnosed(id: string, ctx: CommandContext): Promise<ServerDetail> {
+  try {
+    return await ctx.transport.getServer(id);
+  } catch (err) {
+    if (err instanceof CliError) {
+      throw diagnoseServerCredentialRefused(err, id);
+    }
+    throw err;
+  }
+}
+
+/** Runs `power`, rewriting a 403 (per-server Archon identity wall) via `diagnoseServerCredentialRefused`. */
+async function powerDiagnosed(id: string, action: PowerAction, ctx: CommandContext): Promise<void> {
+  try {
+    await ctx.transport.power(id, action);
+  } catch (err) {
+    if (err instanceof CliError) {
+      throw diagnoseServerCredentialRefused(err, id);
+    }
+    throw err;
+  }
+}
 
 const TOP_USAGE =
   "Usage: rinth servers list | get <id> | power <id> start|stop|restart|kill | upstream <id> --project <slug|id> --version <version_id> [--restart] | exec <id> [--wait <ms>] <command...>";
@@ -38,7 +64,7 @@ async function get(args: string[], ctx: CommandContext): Promise<number> {
     throw new CliError(GET_USAGE, ExitCode.Usage);
   }
 
-  const server = await ctx.transport.getServer(id);
+  const server = await getServerDiagnosed(id, ctx);
 
   if (ctx.json) {
     printJson(server);
@@ -76,7 +102,7 @@ async function power(args: string[], ctx: CommandContext): Promise<number> {
     throw new CliError(POWER_USAGE, ExitCode.Usage);
   }
 
-  await ctx.transport.power(id, mapped);
+  await powerDiagnosed(id, mapped, ctx);
 
   if (ctx.json) {
     printJson({ id, action, accepted: true });
@@ -136,13 +162,30 @@ async function upstream(args: string[], ctx: CommandContext): Promise<number> {
     throw new CliError(UPSTREAM_USAGE, ExitCode.Usage);
   }
 
-  const projectId = await ctx.transport.resolveProjectId(project);
-  await ctx.transport.setUpstream(id, projectId, version);
-  const server = await ctx.transport.getServer(id);
+  let projectId: string;
+  try {
+    projectId = await ctx.transport.resolveProjectId(project);
+  } catch (err) {
+    if (err instanceof CliError) {
+      throw diagnoseNotFound(err, `Project ${project}`);
+    }
+    throw err;
+  }
+
+  try {
+    await ctx.transport.setUpstream(id, projectId, version);
+  } catch (err) {
+    if (err instanceof CliError) {
+      throw diagnoseUpstreamRouteDead(err);
+    }
+    throw err;
+  }
+
+  const server = await getServerDiagnosed(id, ctx);
 
   let restarted = false;
   if (restart) {
-    await ctx.transport.power(id, "Restart");
+    await powerDiagnosed(id, "Restart", ctx);
     restarted = true;
   }
 
@@ -203,7 +246,15 @@ async function exec(args: string[], ctx: CommandContext): Promise<number> {
   const { id, wait, command } = parsed;
   const commandStr = command.join(" ");
 
-  const auth = await ctx.transport.getWebSocketAuth(id);
+  let auth: Archon.Websocket.v0.WSAuth;
+  try {
+    auth = await ctx.transport.getWebSocketAuth(id);
+  } catch (err) {
+    if (err instanceof CliError) {
+      throw diagnoseServerCredentialRefused(err, id);
+    }
+    throw err;
+  }
   // Register before anything else can happen on this socket, so a crash or
   // stray log line can never leak the credential.
   registerSecret(auth.token);
