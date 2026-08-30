@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { ModrinthApiError } from "@modrinth/api-client";
 import type { Archon, Labrinth } from "@modrinth/api-client";
-import type { CreateVersionFile, CreateVersionRequest } from "../../../src/client/index.ts";
+import type { CreateProjectRequest, CreateVersionFile, CreateVersionRequest } from "../../../src/client/index.ts";
 import {
+  buildCreateProjectFormData,
   buildCreateVersionFormData,
   createRealTransport,
   toCliError,
@@ -147,6 +148,44 @@ describe("buildCreateVersionFormData", () => {
     const file = filePart as File;
     expect(file.name).toBe("pack.mrpack");
     expect(await file.text()).toBe("mrpack-bytes");
+  });
+});
+
+describe("buildCreateProjectFormData", () => {
+  const DATA: CreateProjectRequest = {
+    title: "My Draft Mod",
+    project_type: "mod",
+    slug: "my-draft-mod",
+    description: "A mod that hasn't been approved yet",
+    body: "Long description",
+    categories: ["technology"],
+    client_side: "required",
+    server_side: "unsupported",
+    license_id: "MIT",
+    is_draft: true,
+    initial_versions: [],
+  };
+
+  test("the `data` part parses to JSON with exactly the expected fields", () => {
+    const formData = buildCreateProjectFormData(DATA);
+    const raw = formData.get("data");
+    expect(typeof raw).toBe("string");
+    expect(JSON.parse(raw as string)).toEqual(DATA);
+  });
+
+  test("no icon part is present when none is given", () => {
+    const formData = buildCreateProjectFormData(DATA);
+    expect(formData.get("icon")).toBeNull();
+  });
+
+  test("an icon part is included, under the name given, when one is passed", async () => {
+    const formData = buildCreateProjectFormData(DATA, { name: "icon.png", data: new TextEncoder().encode("png-bytes") });
+    const iconPart = formData.get("icon");
+
+    expect(iconPart).toBeInstanceOf(Blob);
+    const file = iconPart as File;
+    expect(file.name).toBe("icon.png");
+    expect(await file.text()).toBe("png-bytes");
   });
 });
 
@@ -862,6 +901,78 @@ describe("createRealTransport", () => {
       expect((caught as CliError).message).toContain("invalid version_number");
       expect((caught as CliError).status).toBe(400);
       expect((caught as CliError).endpoint).toBe("POST /v2/version");
+    });
+
+    test("createProject sends the Bearer token, User-Agent, and a multipart body, resolving with the created project on 200", async () => {
+      let capturedUrl: string | undefined;
+      let capturedHeaders: Headers | undefined;
+      let capturedBody: unknown;
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (url: string, init: RequestInit) => {
+        capturedUrl = String(url);
+        capturedHeaders = new Headers(init.headers);
+        capturedBody = init.body;
+        return new Response(JSON.stringify(FIXTURE_PROJECT), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as unknown as typeof fetch);
+
+      const transport = createRealTransport();
+      const data: CreateProjectRequest = {
+        title: "My Draft Mod",
+        project_type: "mod",
+        slug: "my-draft-mod",
+        description: "short",
+        body: "long",
+        categories: [],
+        client_side: "required",
+        server_side: "unsupported",
+        license_id: "MIT",
+        is_draft: true,
+        initial_versions: [],
+      };
+      const created = await transport.createProject(data);
+      fetchSpy.mockRestore();
+
+      expect(created).toEqual(FIXTURE_PROJECT);
+      expect(capturedUrl).toBe("https://api.modrinth.com/v2/project");
+      expect(capturedHeaders?.get("authorization")).toBe("Bearer unit-test-real-transport-token");
+      expect(capturedHeaders?.get("user-agent")).toContain("rinth-cli");
+      expect(capturedBody).toBeInstanceOf(FormData);
+    });
+
+    test("createProject rejects with a CliError mapped from a 400 response", async () => {
+      const fetchSpy = mockFetch(
+        () => new Response(JSON.stringify({ description: "invalid slug" }), { status: 400 }),
+      );
+
+      const transport = createRealTransport();
+      const data: CreateProjectRequest = {
+        title: "My Draft Mod",
+        project_type: "mod",
+        slug: "bad slug",
+        description: "short",
+        body: "long",
+        categories: [],
+        client_side: "required",
+        server_side: "unsupported",
+        license_id: "MIT",
+        is_draft: true,
+        initial_versions: [],
+      };
+
+      let caught: unknown;
+      try {
+        await transport.createProject(data);
+      } catch (err) {
+        caught = err;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      expect((caught as CliError).exitCode).toBe(ExitCode.ApiError);
+      expect((caught as CliError).message).toContain("invalid slug");
+      expect((caught as CliError).endpoint).toBe("POST /v2/project");
     });
 
     test("updateProject sends a PATCH with the exact sparse body and the Bearer token, resolving on a 204 response", async () => {

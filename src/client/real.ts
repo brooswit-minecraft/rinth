@@ -44,6 +44,8 @@ import { CliError, ExitCode, exitCodeForApiError } from "../errors.ts";
 import {
   ICON_CONTENT_TYPES,
   type ConsoleSocket,
+  type CreateProjectIconFile,
+  type CreateProjectRequest,
   type CreateVersionFile,
   type CreateVersionRequest,
   type PowerAction,
@@ -156,7 +158,6 @@ async function uploadProjectIconRaw(
       body: bytes,
     },
   );
-
   if (!response.ok) {
     const responseData: unknown = await response.json().catch(() => undefined);
     const description =
@@ -167,6 +168,50 @@ async function uploadProjectIconRaw(
       typeof description === "string" ? description : `Icon upload failed with status ${response.status}`;
     throw new ModrinthApiError(message, { statusCode: response.status, responseData });
   }
+}
+
+/**
+ * Exported for unit testing offline — builds the multipart body labrinth's
+ * `POST /project` (v2) expects: a JSON `data` part plus an OPTIONAL `icon`
+ * part. `icon` is unused by any CLI flag today — RINTH-4 owns `project
+ * icon` — this parameter exists so an icon part can be added later without
+ * restructuring this function.
+ */
+export function buildCreateProjectFormData(data: CreateProjectRequest, icon?: CreateProjectIconFile): FormData {
+  const formData = new FormData();
+  formData.append("data", JSON.stringify(data));
+  if (icon) {
+    formData.append("icon", new Blob([icon.data]), icon.name);
+  }
+  return formData;
+}
+
+async function createProjectRaw(
+  token: string,
+  data: CreateProjectRequest,
+  icon?: CreateProjectIconFile,
+): Promise<Labrinth.Projects.v2.Project> {
+  const response = await fetch(`${LABRINTH_BASE_URL}/v2/project`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": USER_AGENT,
+      "X-Panel-Version": "1",
+    },
+    body: buildCreateProjectFormData(data, icon),
+  });
+  if (!response.ok) {
+    const responseData: unknown = await response.json().catch(() => undefined);
+    const description =
+      responseData && typeof responseData === "object" && "description" in responseData
+        ? (responseData as { description?: unknown }).description
+        : undefined;
+    const message =
+      typeof description === "string" ? description : `Project creation failed with status ${response.status}`;
+    throw new ModrinthApiError(message, { statusCode: response.status, responseData });
+  }
+
+  return (await response.json()) as Labrinth.Projects.v2.Project;
 }
 
 /** Exported for unit testing offline — the field trim that keeps server credentials out of output. */
@@ -324,6 +369,9 @@ export function createRealTransport(): Transport {
     // via a read-back, not this transport method.
     deleteVersion: (id: string) =>
       call(() => client.labrinth.versions_v2.deleteVersion(id), `DELETE /v2/version/${encodeURIComponent(id)}`),
+
+    createProject: (data: CreateProjectRequest, icon?: CreateProjectIconFile) =>
+      call(() => createProjectRaw(token, data, icon), "POST /v2/project"),
 
     // `client.request()` (not `.upload()`) — the same escape hatch
     // `getCurrentUser`/`resolveProjectId` use above. Confirmed safe: it
