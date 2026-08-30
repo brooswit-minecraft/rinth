@@ -41,15 +41,16 @@ import {
 import type { Archon, AuthConfig, Labrinth } from "@modrinth/api-client";
 import { requireToken } from "../auth.ts";
 import { CliError, ExitCode, exitCodeForApiError } from "../errors.ts";
-import type {
-  ConsoleSocket,
-  CreateVersionFile,
-  CreateVersionRequest,
-  PowerAction,
-  PublicServer,
-  ServerDetail,
-  Transport,
-  VersionFilters,
+import {
+  ICON_CONTENT_TYPES,
+  type ConsoleSocket,
+  type CreateVersionFile,
+  type CreateVersionRequest,
+  type PowerAction,
+  type PublicServer,
+  type ServerDetail,
+  type Transport,
+  type VersionFilters,
 } from "./index.ts";
 
 const USER_AGENT = "rinth-cli (+https://github.com/brooswit-minecraft/rinth)";
@@ -123,6 +124,49 @@ async function createVersionRaw(
   }
 
   return (await response.json()) as Labrinth.Versions.v2.Version;
+}
+
+/**
+ * Exported for unit testing offline — the same raw-`fetch` fallback
+ * `createVersionRaw` uses, for the same reason: `PATCH /project/{id}/icon`
+ * takes the raw image bytes as its body (confirmed against
+ * https://docs.modrinth.com/api/operations/changeprojecticon/ — see the PR
+ * body), which is not a shape the API client's typed module methods cover
+ * for v2 (`projects_v3.changeIcon()` exists but is v3-only and still goes
+ * through the client's broken `upload()`/XMLHttpRequest path — see this
+ * file's header). A raw `fetch` sidesteps both problems at once.
+ */
+async function uploadProjectIconRaw(
+  token: string,
+  idOrSlug: string,
+  ext: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  const contentType = ICON_CONTENT_TYPES[ext] ?? "application/octet-stream";
+  const response = await fetch(
+    `${LABRINTH_BASE_URL}/v2/project/${encodeURIComponent(idOrSlug)}/icon?ext=${encodeURIComponent(ext)}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "User-Agent": USER_AGENT,
+        "X-Panel-Version": "1",
+        "Content-Type": contentType,
+      },
+      body: bytes,
+    },
+  );
+
+  if (!response.ok) {
+    const responseData: unknown = await response.json().catch(() => undefined);
+    const description =
+      responseData && typeof responseData === "object" && "description" in responseData
+        ? (responseData as { description?: unknown }).description
+        : undefined;
+    const message =
+      typeof description === "string" ? description : `Icon upload failed with status ${response.status}`;
+    throw new ModrinthApiError(message, { statusCode: response.status, responseData });
+  }
 }
 
 /** Exported for unit testing offline — the field trim that keeps server credentials out of output. */
@@ -280,5 +324,32 @@ export function createRealTransport(): Transport {
     // via a read-back, not this transport method.
     deleteVersion: (id: string) =>
       call(() => client.labrinth.versions_v2.deleteVersion(id), `DELETE /v2/version/${encodeURIComponent(id)}`),
+
+    // `client.request()` (not `.upload()`) — the same escape hatch
+    // `getCurrentUser`/`resolveProjectId` use above. Confirmed safe: it
+    // goes through the base client's `executeRequest()`, which is backed by
+    // `ofetch` (a fetch wrapper), never `XMLHttpRequest` — only `.upload()`
+    // (`XHRUploadClient`) touches that browser-only global. `patch` is
+    // passed through untouched (RINTH-3/RINTH-4 epic ruling — see
+    // `Transport#updateProject`'s doc comment); `ofetch` JSON-serializes an
+    // object body automatically (confirmed in the package's own
+    // `RequestOptions.body` doc comment).
+    updateProject: (idOrSlug: string, patch: Record<string, unknown>) =>
+      call(
+        () =>
+          client.request<void>(`/project/${encodeURIComponent(idOrSlug)}`, {
+            api: "labrinth",
+            version: 2,
+            method: "PATCH",
+            body: patch,
+          }),
+        `PATCH /v2/project/${encodeURIComponent(idOrSlug)}`,
+      ),
+
+    uploadProjectIcon: (idOrSlug: string, ext: string, bytes: Uint8Array) =>
+      call(
+        () => uploadProjectIconRaw(token, idOrSlug, ext, bytes),
+        `PATCH /v2/project/${encodeURIComponent(idOrSlug)}/icon`,
+      ),
   };
 }
