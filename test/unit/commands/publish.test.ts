@@ -538,6 +538,27 @@ describe("rinth publish", () => {
       expect(code).toBe(ExitCode.ApiError);
     });
 
+    test("a 404 from getProject (publish's project resolution) is diagnosed, not surfaced bare", async () => {
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
+      const transport = createFakeTransport({
+        projectError: apiError(ExitCode.NotFound, "Not Found", {
+          status: 404,
+          endpoint: "GET /v2/project/does-not-exist",
+        }),
+      });
+
+      const code = await run(["publish", "does-not-exist", "--file", mrpackPath, "--version", "1.0.0"], {
+        transport,
+      });
+      const message = String(errSpy.mock.calls[0]?.[0]);
+      errSpy.mockRestore();
+
+      expect(code).toBe(ExitCode.NotFound);
+      expect(message).not.toBe("Not Found");
+      expect(message).toContain("does-not-exist");
+      expect(message).toContain("rinth whoami");
+    });
+
     test("a 401 error from createVersion surfaces as exit code 3", async () => {
       const errSpy = spyOn(console, "error").mockImplementation(() => {});
       const transport = createFakeTransport({

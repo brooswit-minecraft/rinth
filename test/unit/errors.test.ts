@@ -24,6 +24,35 @@ describe("CliError", () => {
     expect(err.status).toBe(403);
     expect(err.endpoint).toBe("GET /modrinth/v0/servers/srv_123");
   });
+
+  test("defaults reason to null when not given", () => {
+    const err = new CliError("bad args", ExitCode.Usage);
+    expect(err.reason).toBeNull();
+  });
+
+  test("carries reason when given", () => {
+    const err = new CliError("no match", ExitCode.NoVersionMatch, { reason: "no_version_match" });
+    expect(err.reason).toBe("no_version_match");
+  });
+});
+
+describe("ExitCode", () => {
+  // RINTH-6/RINTH-2: `versions latest`'s no-match case moved off NotFound
+  // onto two new, distinct codes — see errors.ts's header comment.
+  test("NoVersionMatch and WaitTimeout are distinct from every existing code", () => {
+    const existing = [
+      ExitCode.Ok,
+      ExitCode.Generic,
+      ExitCode.Usage,
+      ExitCode.AuthMissing,
+      ExitCode.NotFound,
+      ExitCode.ApiError,
+      ExitCode.Network,
+    ];
+    expect(existing).not.toContain(ExitCode.NoVersionMatch);
+    expect(existing).not.toContain(ExitCode.WaitTimeout);
+    expect(ExitCode.NoVersionMatch).not.toBe(ExitCode.WaitTimeout);
+  });
 });
 
 describe("exitCodeForApiError", () => {

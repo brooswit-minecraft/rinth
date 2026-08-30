@@ -40,6 +40,7 @@ describe("requireToken", () => {
       expect(err).toBeInstanceOf(CliError);
       expect((err as CliError).exitCode).toBe(ExitCode.AuthMissing);
       expect((err as CliError).message).toContain("MODRINTH_TOKEN");
+      expect((err as CliError).reason).toBe("auth");
     }
   });
 

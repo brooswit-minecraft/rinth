@@ -20,6 +20,7 @@ export function requireToken(): string {
     throw new CliError(
       "MODRINTH_TOKEN is not set. Set it with: export MODRINTH_TOKEN=<your Modrinth API token>",
       ExitCode.AuthMissing,
+      { reason: "auth" },
     );
   }
   registerSecret(token);

@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/). CI
 enforces that this file has a `## [<version>]` heading matching the
 `version` field in `package.json` — see README.md.
 
+## [0.6.0] - 2026-08-30
+
+Driven by hand-`curl`ing Modrinth on 2026-08-29 and hitting two places
+where the live API lies: a DRAFT project 404s to an unauthenticated read
+(byte-identical to a 404 for a project that doesn't exist), and `DELETE
+/v2/version/{id}` returns 404 even when the delete succeeds.
+
+### BREAKING CHANGE
+
+- `versions latest`'s no-match case moved off exit 4 (`NotFound`) onto a
+  new, dedicated exit 7 (`NoVersionMatch`). It used to share exit 4 with
+  "no such project", which meant a caller couldn't tell "this doesn't
+  exist" (permanent) apart from "nothing matched yet" (worth retrying) —
+  see "Four distinguishable outcomes" under `rinth versions latest` in the
+  README, and the exit-code table (before/after) under "Exit codes". Every
+  other exit code keeps its existing meaning for every scenario it already
+  covered.
+
+### Added
+
+- `rinth project get <idOrSlug>` (new command family, `src/commands/project.ts`):
+  labrinth v2 `GET /project/{idOrSlug}` with the Bearer token always
+  attached, so a DRAFT project the token's identity can see resolves —
+  where a hand-rolled unauthenticated request 404s. `--json` prints the
+  unmodified project object; human mode prints a summary (id, slug, title,
+  status, project_type, client_side/server_side, categories, license,
+  source_url, issues_url). A 404 is routed through the new shared diagnosis
+  helper rather than surfacing bare.
+- `rinth versions delete <version_id>` (`src/commands/versions.ts`):
+  `DELETE /v2/version/{id}`, but never trusts that call's own status code —
+  the live API returns 404 even when the delete succeeds. Reads the version
+  back afterward and decides purely from that: `DELETE` 2xx or 404 + a 404
+  read-back both mean deleted (exit 0; the human message notes when the
+  live API's 404-on-success quirk fired); `DELETE` 404 + a 200 read-back is
+  a genuine failure (exit 5, message says the version is still present);
+  any other `DELETE` 4xx/5xx maps normally and the read-back is never
+  attempted. `--json` prints `{"id","deleted":true}` on success. Gained
+  `Transport#getVersion`/`Transport#deleteVersion`
+  (`src/client/index.ts`/`real.ts`/`fake.ts`).
+- A shared 404-diagnosis helper (`src/diagnose.ts`, `diagnoseNotFound()`):
+  every project/version lookup — `project get`, `versions list`, `versions
+  latest`, and `publish`'s project resolution — now routes a 404 through
+  it instead of surfacing a bare "404 Not Found". The rewritten message
+  states the request was authenticated and names every candidate cause
+  (no such project/version; a draft not visible to this identity; a
+  missing/rejected token) and points at `rinth whoami`. Deliberately one
+  outcome covering multiple causes, not a guess at which applies — the
+  live API returns an identical 404 for "no such project" and "a draft
+  this identity can't see," and there's no way to tell them apart from the
+  response alone. Preserves the existing `CliError`'s `exitCode`/`status`/
+  `endpoint` exactly — the `--json` error shape only gains a better
+  `message` (plus the additive `reason` below), it does not change shape.
+- `rinth versions latest --wait <seconds> [--wait-interval <seconds>]`:
+  bounded polling for a downstream consumer (SCHEM-6's deploy workflow,
+  which today hand-rolls a `curl`+`jq` retry loop of ~20 attempts at 15s
+  with its own draft-404 handling) to replace that loop with rinth itself.
+  Both the total budget and the poll interval are the caller's to set —
+  `--wait-interval` defaults to 15s when omitted, and is a usage error
+  without `--wait`. Without `--wait`, behavior is unchanged: exactly one
+  attempt. Delivers four machine-distinguishable outcomes (distinct exit
+  codes, see the BREAKING CHANGE note, plus an additive `reason` string on
+  the `--json` error object): token absent/rejected (`"auth"`, exit 3); the
+  project itself unreadable, authenticated (`"project_unreadable"`, exit
+  4); the project resolved but nothing matched the filters
+  (`"no_version_match"`, exit 7 — the retryable one `--wait` polls on); the
+  wait budget exhausted (`"wait_exhausted"`, exit 8). Only the third is
+  ever retried — an auth or project-read failure aborts immediately, with
+  or without `--wait`. Nothing is printed on any attempt but the last
+  (success or final error) — every write still goes through
+  `src/output.ts`; see `test/unit/commands/versions.test.ts`'s
+  redaction-to-exhaustion test, which drives `--wait` to exhaustion across
+  multiple attempts with a sentinel `MODRINTH_TOKEN` and asserts it never
+  appears in any captured output. Polls through a new injectable clock
+  seam (`Clock` in `src/clock.ts`, `CommandContext.clock` in
+  `src/commands/types.ts`) rather than a hidden CLI flag, so unit tests run
+  the real budget/elapsed-time arithmetic instantly and offline
+  (`createFakeClock()` in `src/client/fake.ts`).
+- `CliError` (`src/errors.ts`) gained an optional `reason` (a stable,
+  machine-readable string, `null` by default) alongside `status`/
+  `endpoint`; `--json` error output gains the matching `reason` field,
+  additive to the documented `{error:{code,status,endpoint,message}}`
+  shape. Set by `diagnoseNotFound()` (`"project_unreadable"`), a
+  missing/rejected token (`"auth"`, from `requireToken()` and
+  `toCliError()`'s 401/403 mapping), and `versions latest --wait`'s two new
+  outcomes above.
+- Two new exit codes, `ExitCode.NoVersionMatch` (7) and
+  `ExitCode.WaitTimeout` (8) — see the BREAKING CHANGE note.
+- `test/integration/project.integration.test.ts` and
+  `test/integration/versions-delete.integration.test.ts`: gated on
+  `MODRINTH_TOKEN` (both) and additionally `RINTH_TEST_PROJECT` (the
+  delete test, following `publish.integration.test.ts`'s pattern — it
+  publishes its own throwaway version and immediately deletes it, so it
+  can never delete a version it didn't just create); both skip cleanly
+  when their env vars are unset.
+
 ## [0.5.0] - 2026-08-28
 
 ### Added

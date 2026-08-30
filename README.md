@@ -4,10 +4,10 @@ A Modrinth CLI (servers management + publish) wrapping [`@modrinth/api-client`](
 One tested surface usable both by a human at a shell and by CI — there is no
 official Modrinth CLI.
 
-Status: v0.5.0. Full command surface: `whoami`; `servers
-list|get|power|upstream|exec`; `versions list|latest`; `publish`. See
-"Known gaps / follow-ups" below for what still doesn't work against the
-live API.
+Status: v0.6.0. Full command surface: `whoami`; `servers
+list|get|power|upstream|exec`; `versions list|latest|delete`; `publish`;
+`project get`. See "Known gaps / follow-ups" below for what still doesn't
+work against the live API.
 
 ## Install / run
 
@@ -306,6 +306,42 @@ The console socket is always closed, on every exit path, including a timed-
 out authentication handshake — the command can never hang the process. The
 WebSocket auth token (fetched per invocation, short-lived) is registered
 with the same redaction path as `MODRINTH_TOKEN` and never appears in output.
+
+### `rinth project get <idOrSlug>`
+
+`GET https://api.modrinth.com/v2/project/{idOrSlug}` with the Bearer token
+**always attached** — unlike a hand-rolled unauthenticated `curl`, this
+resolves a **DRAFT** project the token's identity can see. The live API
+404s a draft project to an unauthenticated read, byte-identical to a 404 for
+a project that doesn't exist at all — see "Authentication" above and "404
+diagnosis" below. A residual 404 (no such project, or a draft this identity
+can't see) is diagnosed rather than surfaced bare.
+
+```sh
+rinth project get my-draft-modpack
+```
+
+**Human output** — a readable summary:
+
+```
+My Draft Modpack (AbCdEfGh)
+  slug:          my-draft-modpack
+  status:        draft
+  project_type:  modpack
+  client_side:   required
+  server_side:   optional
+  categories:    technology, utility
+  license:       MIT (MIT License)
+  source_url:    https://github.com/example/my-draft-modpack
+  issues_url:    none
+```
+
+**`--json`** — the raw project object, unmodified API shape:
+
+```json
+{ "id": "AbCdEfGh", "slug": "my-draft-modpack", "status": "draft", "...": "..." }
+```
+
 ### `rinth versions list`
 
 `GET https://api.modrinth.com/v2/project/{idOrSlug}/version` (no auth
@@ -390,7 +426,69 @@ rinth versions latest sodium --loader fabric --game-version 1.20.4
 **`--json`** — a single version object (not an array), same shape as one
 element of `versions list`'s array.
 
-No match exits 4 (`ExitCode.NotFound`) with a clear message.
+#### Four distinguishable outcomes (and why `versions latest`'s exit codes changed)
+
+`versions latest` used to exit 4 (`NotFound`) for both "no such project" and
+"no version matched the filters" — genuinely different facts a caller (in
+particular a CI deploy step) needs to react to differently: the first is
+permanent, the second is worth retrying. **This is a breaking change** — see
+CHANGELOG.md. There are now four machine-distinguishable outcomes:
+
+| # | Outcome | Exit code | `reason` (`--json`) | Retryable under `--wait`? |
+| - | ------- | --------- | -------------------- | -------------------------- |
+| i | Token absent or rejected | 3 (`AuthMissing`) | `"auth"` | No |
+| ii | The project itself couldn't be read (still 404, authenticated) — no such project **or** a draft this identity can't see; the API returns an identical 404 for both, so this is honestly one outcome, not a guess at which | 4 (`NotFound`) | `"project_unreadable"` | No |
+| iii | The project resolved fine, but nothing matched the filters | **7 (`NoVersionMatch`, NEW)** | `"no_version_match"` | Yes — this is the one `--wait` polls on |
+| iv | `--wait`'s budget expired before a match ever appeared | **8 (`WaitTimeout`, NEW)** | `"wait_exhausted"` | N/A (already exhausted) |
+
+Outcomes (i) and (ii) abort immediately, with or without `--wait` — polling
+past an auth failure or an unreadable project cannot make it resolve. Only
+(iii) is retried inside `--wait`'s loop.
+
+#### `--wait <seconds>` / `--wait-interval <seconds>`: bounded polling
+
+Without `--wait`, behavior is **exactly** the original single-attempt,
+fail-fast lookup (only the no-match exit code changed, per the table above).
+With `--wait`, `versions latest` polls until a matching version appears or
+the budget expires — both the total budget **and** the poll interval are the
+caller's to set (a fixed internal interval isn't enough for a consumer that
+needs a specific cadence, e.g. ~20 attempts at 15s):
+
+```sh
+# Fail-fast (unchanged): one lookup, exit 7 immediately if nothing matches yet.
+rinth versions latest sodium --loader fabric
+
+# Poll for up to 5 minutes, checking every 15s (the default interval).
+rinth versions latest sodium --loader fabric --wait 300
+
+# Poll for up to 5 minutes, checking every 20s.
+rinth versions latest sodium --loader fabric --wait 300 --wait-interval 20
+```
+
+`--wait-interval` defaults to **15 seconds** when `--wait` is given without
+it, and is a usage error (exit 2) if given without `--wait`. On timeout, the
+error message states plainly that the project resolved but nothing matched
+within the budget — a different message (and a different exit code) from
+"the project itself could not be read."
+
+Nothing is printed on any attempt but the last (success, or the final
+timeout error) — every write still goes through `src/output.ts` like every
+other command, and a retry loop that logged its request on each attempt
+would be the easiest way for a token to reach a public CI log. See
+`test/unit/commands/versions.test.ts`'s redaction-to-exhaustion test, which
+drives `--wait` to exhaustion across multiple attempts with a sentinel token
+and asserts it appears nowhere in captured output, on any attempt.
+
+The wait loop polls through an injectable clock (`CommandContext.clock`,
+`src/clock.ts`) rather than calling `setTimeout`/`Date.now()` directly —
+deliberately **not** a hidden CLI flag: a flag that secretly shortens a
+bounded wait would be undocumented test scaffolding on the public surface of
+a tool meant to run unattended in CI. The real implementation uses real
+timers; unit tests inject a fake clock (`createFakeClock()` in
+`src/client/fake.ts`) whose `sleep()` advances a virtual clock and resolves
+on the next microtask, so a multi-attempt wait runs the same budget/elapsed
+arithmetic as production but completes instantly, offline, with no real
+sleeping.
 
 **Notes on live-API behavior** (verified against
 [docs.modrinth.com](https://docs.modrinth.com) and a real request against
@@ -408,6 +506,51 @@ the `sodium` project):
   `date_published`, but this is not documented behavior, so `versions
   latest` does not rely on response order — it parses and compares
   `date_published` explicitly.
+
+### `rinth versions delete <version_id>`
+
+`DELETE https://api.modrinth.com/v2/version/{id}`.
+
+**The live API returns 404 even when the delete actually succeeds** — this
+was directly observed driving Modrinth by hand with `curl`. Trusting that
+status code at face value would report a successful delete as a failure, so
+this command never does: after the `DELETE` call, it **reads the version
+back** and decides purely from that read-back:
+
+| `DELETE` result | Read-back result | Outcome |
+| --------------- | ----------------- | ------- |
+| 2xx | 404 (gone) | Deleted — exit 0 |
+| 404 | 404 (gone) | Deleted — exit 0 (**the live API's real behavior**, see above) |
+| 404 | 200 (still there) | Genuine failure — exit 5, message says the delete did not take effect |
+| other 4xx/5xx | *(read-back never attempted)* | Normal error mapping via `exitCodeForApiError` |
+
+```sh
+rinth versions delete 4GyXKCLd
+```
+
+Human mode prints one clear line — and when the `DELETE` itself returned
+404 (the API's documented quirk), the line says so, so the next reader
+isn't confused by a "successful delete" that came from a 404:
+
+```
+Deleted version 4GyXKCLd. (The live API's DELETE returned 404 even though the delete succeeded — expected; see README.)
+```
+
+**`--json`** on success:
+
+```json
+{ "id": "4GyXKCLd", "deleted": true }
+```
+
+On failure, the standard `--json` error shape (see "Errors under `--json`"
+below).
+
+**Integration test**: `test/integration/versions-delete.integration.test.ts`
+is gated on `RINTH_TEST_PROJECT` (the same throwaway-project variable
+`publish`'s integration test uses) on top of the usual `MODRINTH_TOKEN`
+gate, and skips cleanly when unset. If it runs, it publishes its own
+throwaway version and immediately deletes it — it can never delete a
+version it didn't just create.
 
 ### `rinth publish`
 
@@ -506,12 +649,18 @@ a project whose version history you care about.
 ## CI recipe
 
 The deploy sequence a consumer runs in CI — resolve the newest matching
-version, then re-point a server at it:
+version (waiting for a freshly-published one if it isn't visible yet), then
+re-point a server at it:
 
 ```sh
-version_id=$(rinth versions latest "$PROJECT" --loader "$LOADER" --json | jq -r '.id')
+version_id=$(rinth --json versions latest "$PROJECT" --loader "$LOADER" --wait 300 --wait-interval 15 | jq -r '.id')
 rinth servers upstream "$SERVER_ID" --project "$PROJECT" --version "$version_id" --restart
 ```
+
+`--wait`/`--wait-interval` (see `rinth versions latest` above) replace a
+hand-rolled `curl`+`jq` retry loop wrapped around `versions latest` — a
+consumer's dispatch path that deliberately does not want to wait can still
+call it without `--wait` for the original fail-fast behavior.
 
 **⚠️ The second step does not work against the live API today.** The v0
 `reinstall` route `servers upstream` calls is dead at the router — see
@@ -537,8 +686,21 @@ into a real pipeline yet.
 - **npm publish under `@brooswit` is deferred** — it needs the
   maintainer's passkey. The pinned `bunx --bun github:...#<tag>` install
   is the supported path until then.
+- **"No such project" and "a draft this identity can't see" are
+  indistinguishable** — the live API returns a byte-identical 404 for both,
+  and there is no way to tell them apart from the response alone. Proven by
+  design, not a rinth limitation to fix: see "404 diagnosis" above, which
+  states this honestly as one outcome with multiple candidate causes rather
+  than guessing which one applies.
 
 ## Exit codes
+
+**BREAKING CHANGE (this version):** `versions latest`'s no-match case moved
+off exit 4 — see "Four distinguishable outcomes" under `rinth versions
+latest` above for the full rationale. Every other code's meaning is
+unchanged for every scenario it already covered.
+
+Before this version:
 
 | Code | Meaning                              |
 | ---- | ------------------------------------- |
@@ -546,9 +708,23 @@ into a real pipeline yet.
 | 1    | Generic / unexpected error            |
 | 2    | Usage error (bad args/command)        |
 | 3    | Auth missing or rejected (401/403)    |
-| 4    | Not found (404)                       |
+| 4    | Not found (404) — including `versions latest`'s no-match case |
 | 5    | API error, other 4xx/5xx              |
 | 6    | Network error                         |
+
+After this version:
+
+| Code | Meaning                              |
+| ---- | ------------------------------------- |
+| 0    | OK                                    |
+| 1    | Generic / unexpected error            |
+| 2    | Usage error (bad args/command)        |
+| 3    | Auth missing or rejected (401/403)    |
+| 4    | Not found (404) — the resource genuinely couldn't be read |
+| 5    | API error, other 4xx/5xx              |
+| 6    | Network error                         |
+| 7    | **NEW** — `versions latest`: the project resolved fine, but no version matched the filters (retryable — see `--wait`) |
+| 8    | **NEW** — `versions latest --wait`: the wait budget expired before a match ever appeared |
 
 Note: the Archon (servers) API returns HTTP 426 ("unsupported archon
 request version") for any request missing an `X-Panel-Version: 1` header,
@@ -564,14 +740,44 @@ authentication timeout both map to exit code 3, the same as a rejected
 `MODRINTH_TOKEN` elsewhere. A refused/failed/never-established socket
 connection maps to exit code 6 (network error).
 
+### 404 diagnosis
+
+Every project/version lookup (`project get`, `versions list`, `versions
+latest`, and `publish`'s project resolution) routes a 404 through one shared
+helper (`src/diagnose.ts`) instead of surfacing a bare "404 Not Found". Every
+rinth request already sends the Bearer token unconditionally, so the
+message states that plainly and names every candidate cause — deliberately
+**one** outcome covering multiple causes, not a guessed answer, because the
+live API returns an identical 404 for "no such project" and "a draft this
+token's identity can't see" and there is no way to tell them apart from the
+response alone:
+
+```
+Project my-draft-modpack was not found (HTTP 404), even though this request was authenticated. This could mean:
+  - no such project/version exists;
+  - it exists but is not visible to this token's identity (e.g. a draft owned by someone else); or
+  - the token is missing or was rejected.
+Run `rinth whoami` to check which identity is in play.
+```
+
+This only ever rewrites the *message* (and sets `reason` — see below); the
+exit code, `status`, and `endpoint` are preserved exactly, so the `--json`
+error shape does not change shape.
+
 ### Errors under `--json`
 
 Every API-backed command routes its failures through the same `CliError`,
 which — in addition to the exit code above — carries the HTTP status (`null`
-for a non-HTTP failure, e.g. a usage error or a socket-level failure) and the
-`"<METHOD> <path>"` of the request that failed (`null` when there was none).
+for a non-HTTP failure, e.g. a usage error or a socket-level failure), the
+`"<METHOD> <path>"` of the request that failed (`null` when there was none),
+and (**new**) a machine-readable `reason` string (`null` when none applies)
+so a consumer can switch on a stable string instead of memorizing exit
+codes — e.g. `"auth"`, `"project_unreadable"`, `"no_version_match"`,
+`"wait_exhausted"`. `reason` is purely additive: every other field keeps its
+existing name and meaning.
 
-- **Plain text** (`--json` not set): the stderr message includes both, e.g.
+- **Plain text** (`--json` not set): the stderr message includes status and
+  endpoint when present, e.g.
 
   ```
   HTTP 403 GET /modrinth/v0/servers/<id>: Forbidden
@@ -584,11 +790,12 @@ for a non-HTTP failure, e.g. a usage error or a socket-level failure) and the
   print) and a single JSON value is written to stderr:
 
   ```json
-  {"error":{"code":3,"status":403,"endpoint":"GET /modrinth/v0/servers/<id>","message":"HTTP 403 GET /modrinth/v0/servers/<id>: Forbidden"}}
+  {"error":{"code":3,"status":403,"endpoint":"GET /modrinth/v0/servers/<id>","message":"HTTP 403 GET /modrinth/v0/servers/<id>: Forbidden","reason":null}}
   ```
 
   `code` is the process exit code (same table as above); `status` is the raw
-  HTTP status or `null`; `endpoint` is `"<METHOD> <path>"` or `null`.
+  HTTP status or `null`; `endpoint` is `"<METHOD> <path>"` or `null`;
+  `reason` is a stable machine-readable string or `null`.
 
 This goes through the same `src/output.ts`/`src/redact.ts` path as every
 other write — there is no separate write path to the terminal, and a token
