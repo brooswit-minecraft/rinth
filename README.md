@@ -45,6 +45,105 @@ bun install
 bun run src/cli.ts --help
 ```
 
+### Fleet install (`brooswit` / `booswrit` / `wroosbit`)
+
+**What these three names actually are:** three separate Unix **user
+accounts** (identities), not three separate machines. They are spread
+across two physical machines on the same tailnet:
+
+| Account    | Machine                        | Reachable from this install? |
+| ---------- | ------------------------------- | ----------------------------- |
+| `wroosbit` | `servyboi`                      | Yes — installed below         |
+| `brooswit` | `servyboi` **and** `kchb-thinkpad-x1-carbon-5th` | No — see gap below |
+| `booswrit` | `kchb-thinkpad-x1-carbon-5th`   | No — see gap below            |
+
+Determined by running `hostname`, `whoami`, `ls /home`, and `id` on
+`servyboi` as `wroosbit`: its `/home` holds `brooswit` and `wroosbit` only
+(no `booswrit`), confirming `wroosbit` and `brooswit` both have accounts on
+this box. `tailscale status` lists exactly two machines on the tailnet —
+`servyboi` (this box) and `kchb-thinkpad-x1-carbon-5th` — which, combined
+with an earlier report of that second box's own `/home` listing (`booswrit`,
+`brooswit`, no `wroosbit`), places `booswrit` there and confirms `brooswit`
+has an account on both machines.
+
+**Installed on `wroosbit`@`servyboi`:**
+
+```sh
+export PATH="$HOME/.bun/bin:$PATH"   # only needed for this one-off install command
+bun install -g "github:brooswit-minecraft/rinth#v0.8.0"
+```
+
+This resolves the annotated tag `v0.8.0` (tag object `608cb8695b2796a663d82f3a623d974dabc18eb7`,
+dereferencing to commit `4ec35d9dee1bcc1bb4a590213ffe713024c9f1de` — the sha
+RINTH-9 tagged and pushed) and drops a `rinth` shim, a symlink to the
+package's `src/cli.ts`, into `~/.bun/bin`. Chosen over the `bunx --bun`
+wrapper-script alternative because it's already how this box installs
+sibling tools (e.g. `drovr`) and it was verified to actually run the
+TypeScript entrypoint correctly (see verification below) rather than just
+exiting 0 — the shim's own `#!/usr/bin/env bun` shebang only resolves if
+`bun` itself is also on `PATH`, which the PATH step below guarantees.
+
+**PATH persistence — fish-specific.** The shell here is fish
+(`/usr/bin/fish`), and `~/.bun/bin` (needed for both `bun` and `rinth`) was
+**not** on the default non-interactive PATH before this change — the same
+gap RINTH-1 found on `servyboi`. A `~/.bashrc` edit would not have fixed
+this and would have looked like it worked when merely sourced. Fixed with
+fish's own persistent mechanism, which writes to the universal
+`fish_user_paths` variable (survives across sessions, independent of
+`~/.config/fish/config.fish`):
+
+```sh
+fish -c 'fish_add_path -m ~/.bun/bin'
+```
+
+**Verified from a genuinely fresh fish session** (`fish -l -c`, a new login
+shell, not the shell the install ran in):
+
+```
+$ fish -l -c 'rinth --help'
+rinth — a Modrinth CLI
+
+Usage: rinth [--json] <command> [args]
+```
+
+```
+$ fish -l -c 'rinth whoami; echo "EXIT_STATUS=$status"'
+MODRINTH_TOKEN is not set. Set it with: export MODRINTH_TOKEN=<your Modrinth API token>
+EXIT_STATUS=3
+```
+
+No `MODRINTH_TOKEN` is set in `wroosbit`@`servyboi`'s environment, so the
+auth-check failure above (exit 3, naming `MODRINTH_TOKEN`) is the strongest
+available proof on this box — it confirms the real binary resolved from
+`PATH` and ran its own code. No stronger `whoami --json` proof was
+available or attempted here.
+
+**Gaps — two of the three accounts could not be installed on:**
+
+- **`brooswit`@`servyboi`**: `/home/brooswit` exists on this box but is
+  `drwxr-x---`, owned by `brooswit:brooswit` — `wroosbit` has no read/write
+  access to it. `wroosbit` has `sudo` group membership, but
+  `sudo -n -u brooswit whoami` fails with "a password is required"; no
+  password is available in this environment, and guessing or otherwise
+  obtaining one is out of scope. **Unblocked by:** the `brooswit` account's
+  own credentials (run the install as `brooswit` directly), or an admin
+  granting `wroosbit` passwordless `sudo` for that user.
+- **`booswrit`@`kchb-thinkpad-x1-carbon-5th`**: that machine is not
+  reachable at all from `servyboi`. Both a direct SSH attempt and
+  `tailscale ssh` were refused at the TCP level (no `sshd` listening),
+  confirming this is not a credentials problem:
+
+  ```
+  $ ssh -o BatchMode=yes booswrit@kchb-thinkpad-x1-carbon-5th "hostname"
+  ssh: connect to host kchb-thinkpad-x1-carbon-5th port 22: Connection refused
+
+  $ tailscale ssh kchb-thinkpad-x1-carbon-5th "hostname"
+  Dial(...): dial tcp 100.99.162.116:22: connect: connection refused
+  ```
+
+  **Unblocked by:** an SSH server actually running and reachable on that
+  box, or a session running directly on it.
+
 ## Authentication
 
 Set `MODRINTH_TOKEN` in the environment. **The token is read from this env
