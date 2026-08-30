@@ -45,6 +45,176 @@ bun install
 bun run src/cli.ts --help
 ```
 
+### Fleet install (`brooswit` / `booswrit` / `wroosbit`)
+
+**What these three names actually are:** three separate Unix **user
+accounts** (identities), not three separate machines. They are spread
+across two physical machines on the same tailnet:
+
+| Account    | Machine                        | Installed?                    |
+| ---------- | ------------------------------- | ------------------------------ |
+| `wroosbit` | `servyboi`                      | Yes — installed below          |
+| `booswrit` | `kchb-thinkpad-x1-carbon-5th`   | Yes — installed below          |
+| `brooswit` | `servyboi` **and** `kchb-thinkpad-x1-carbon-5th` | No — see gap below |
+
+Determined by running `hostname`, `whoami`, `ls /home`, and `id` on
+`servyboi` as `wroosbit`: its `/home` holds `brooswit` and `wroosbit` only
+(no `booswrit`), confirming `wroosbit` and `brooswit` both have accounts on
+this box. `tailscale status` lists exactly two machines on the tailnet —
+`servyboi` (this box) and `kchb-thinkpad-x1-carbon-5th` — which, combined
+with that second box's own `/home` listing (`booswrit`, `brooswit`, no
+`wroosbit`, gathered directly on that box by the `booswrit` account itself),
+places `booswrit` there and confirms `brooswit` has an account on both
+machines.
+
+**Installed on `wroosbit`@`servyboi`:**
+
+```sh
+export PATH="$HOME/.bun/bin:$PATH"   # only needed for this one-off install command
+bun install -g "github:brooswit-minecraft/rinth#v0.8.0"
+```
+
+This resolves the annotated tag `v0.8.0` (tag object `608cb8695b2796a663d82f3a623d974dabc18eb7`,
+dereferencing to commit `4ec35d9dee1bcc1bb4a590213ffe713024c9f1de` — the sha
+RINTH-9 tagged and pushed) and drops a `rinth` shim, a symlink to the
+package's `src/cli.ts`, into `~/.bun/bin`. Chosen over the `bunx --bun`
+wrapper-script alternative because it's already how this box installs
+sibling tools (e.g. `drovr`) and it was verified to actually run the
+TypeScript entrypoint correctly (see verification below) rather than just
+exiting 0 — the shim's own `#!/usr/bin/env bun` shebang only resolves if
+`bun` itself is also on `PATH`, which the PATH step below guarantees.
+
+**PATH persistence — fish-specific.** The shell here is fish
+(`/usr/bin/fish`), and `~/.bun/bin` (needed for both `bun` and `rinth`) was
+**not** on the default non-interactive PATH before this change — the same
+gap RINTH-1 found on `servyboi`. A `~/.bashrc` edit would not have fixed
+this and would have looked like it worked when merely sourced. Fixed with
+fish's own persistent mechanism, which writes to the universal
+`fish_user_paths` variable (survives across sessions, independent of
+`~/.config/fish/config.fish`):
+
+```sh
+fish -c 'fish_add_path -m ~/.bun/bin'
+```
+
+**Verified from a genuinely fresh fish session with a stripped
+environment**, not just `fish -l -c` — a plain `fish -l -c` starts a login
+shell but still **inherits `PATH` from its parent process**, so it can pass
+even when nothing was actually persisted (a same-session false positive,
+caught during review — see the `booswrit`@`kchb-thinkpad-x1-carbon-5th`
+verification below, where this exact failure showed up before the fix was
+in place). `env -i` strips the environment first, so only what fish itself
+resolves (universal variables, `config.fish`) can make the command succeed:
+
+```
+$ env -i HOME="$HOME" TERM=xterm /usr/bin/fish -l -c 'rinth --help; echo "EXIT=$status"'
+rinth — a Modrinth CLI
+
+Usage: rinth [--json] <command> [args]
+EXIT=0
+```
+
+```
+$ env -i HOME="$HOME" TERM=xterm /usr/bin/fish -l -c 'rinth whoami; echo "EXIT_STATUS=$status"'
+MODRINTH_TOKEN is not set. Set it with: export MODRINTH_TOKEN=<your Modrinth API token>
+EXIT_STATUS=3
+```
+
+No `MODRINTH_TOKEN` is set in `wroosbit`@`servyboi`'s environment, so the
+auth-check failure above (exit 3, naming `MODRINTH_TOKEN`) is the strongest
+available proof on this box — it confirms the real binary resolved from
+`PATH` and ran its own code. No stronger `whoami --json` proof was
+available or attempted here.
+
+**Installed on `booswrit`@`kchb-thinkpad-x1-carbon-5th`:**
+
+`servyboi` cannot reach this machine at all — see the `brooswit` gap below —
+so this install was performed and verified by the `booswrit` account
+directly, on that box, using the identical mechanism and tag:
+
+```sh
+bun install -g "github:brooswit-minecraft/rinth#v0.8.0"
+```
+
+```
+installed @brooswit/rinth@github:brooswit-minecraft/rinth#608cb86 with binaries:
+ - rinth
+```
+
+Pinned to the same tag, recorded literally in
+`~/.bun/install/global/package.json`:
+
+```json
+{ "dependencies": { "@brooswit/rinth": "github:brooswit-minecraft/rinth#v0.8.0" } }
+```
+
+PATH persistence needed the same fish fix (`fish_user_paths` was empty on
+this box too):
+
+```sh
+fish -c 'fish_add_path -m ~/.bun/bin'
+```
+
+Verified from a fresh fish login shell with a stripped environment (`env
+-i`, per the methodology note above — a plain `fish -l -c` on this box
+initially returned a false positive by inheriting `PATH` from the parent
+shell before `fish_add_path` had actually run):
+
+```
+$ env -i HOME="$HOME" TERM=xterm /usr/bin/fish -l -c 'rinth --help; echo "EXIT=$status"'
+rinth — a Modrinth CLI
+
+Usage: rinth [--json] <command> [args]
+EXIT=0
+
+$ env -i HOME="$HOME" TERM=xterm /usr/bin/fish -l -c 'rinth whoami; echo "EXIT_STATUS=$status"'
+MODRINTH_TOKEN is not set. Set it with: export MODRINTH_TOKEN=<your Modrinth API token>
+EXIT_STATUS=3
+```
+
+No `MODRINTH_TOKEN` is set on this box either (`env | grep -i MODRINTH`
+empty), so exit-3 is likewise the strongest proof available here.
+
+**Gap — `brooswit` could not be installed, on either machine:**
+
+`brooswit` has an account on both `servyboi` and
+`kchb-thinkpad-x1-carbon-5th`, but neither account running an install here
+(`wroosbit` or `booswrit`) can become it:
+
+- **`brooswit`@`servyboi`**: `/home/brooswit` exists but is
+  `drwxr-x---`, owned by `brooswit:brooswit` — `wroosbit` has no read/write
+  access to it. `wroosbit` has `sudo` group membership, but
+  `sudo -n -u brooswit whoami` fails with "a password is required"; no
+  password is available in this environment, and guessing or otherwise
+  obtaining one is out of scope.
+- **`brooswit`@`kchb-thinkpad-x1-carbon-5th`**: same `drwxr-x---` home
+  directory, and `booswrit` is not even in the `sudo` group there
+  (`id -nG` → `booswrit`) — there is no sudo path to try at all on that
+  box.
+
+**Unblocked by:** the `brooswit` account's own credentials (run the install
+as `brooswit` directly, on either machine), or an admin granting the
+relevant account passwordless `sudo` for `brooswit`.
+
+**On `booswrit`@`kchb-thinkpad-x1-carbon-5th` being unreachable from
+`servyboi`:** this is a statement about what `servyboi` can reach, not
+about whether the account is installable at all — as the install above
+demonstrates, it needed a session running directly on that box, not SSH
+access from here. Both a direct SSH attempt and `tailscale ssh` from
+`servyboi` were refused at the TCP level (no `sshd` listening there):
+
+```
+$ ssh -o BatchMode=yes booswrit@kchb-thinkpad-x1-carbon-5th "hostname"
+ssh: connect to host kchb-thinkpad-x1-carbon-5th port 22: Connection refused
+
+$ tailscale ssh kchb-thinkpad-x1-carbon-5th "hostname"
+Dial(...): dial tcp 100.99.162.116:22: connect: connection refused
+```
+
+No task agent running on `servyboi` can bridge that gap — there is no
+`sshd` on the other box to reach — which is exactly why this install had to
+be performed by a session already running there.
+
 ## Authentication
 
 Set `MODRINTH_TOKEN` in the environment. **The token is read from this env
