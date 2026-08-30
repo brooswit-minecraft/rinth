@@ -15,7 +15,7 @@ Pin to a released tag — **not** a branch — so a consumer's install can't
 silently change under them:
 
 ```sh
-bunx --bun github:brooswit-minecraft/rinth#v0.5.0 --help
+bunx --bun github:brooswit-minecraft/rinth#v0.8.0 --help
 ```
 
 The `--bun` flag is required: it tells `bunx` to run the package's `bin`
@@ -29,7 +29,7 @@ TypeScript source under bun.
 - uses: oven-sh/setup-bun@v2
   with:
     bun-version: latest
-- run: bunx --bun github:brooswit-minecraft/rinth#v0.5.0 versions latest sodium --loader fabric --json
+- run: bunx --bun github:brooswit-minecraft/rinth#v0.8.0 versions latest sodium --loader fabric --json
   env:
     MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
 ```
