@@ -194,6 +194,17 @@ describe("toCliError", () => {
     expect(err.message).toBe("Forbidden");
   });
 
+  test.each([401, 403])("sets reason 'auth' for a %d (token absent or rejected — one outcome)", (statusCode) => {
+    const err = toCliError(new ModrinthApiError("nope", { statusCode }));
+    expect(err.exitCode).toBe(ExitCode.AuthMissing);
+    expect(err.reason).toBe("auth");
+  });
+
+  test("leaves reason null for a non-auth status", () => {
+    const err = toCliError(new ModrinthApiError("missing", { statusCode: 404 }));
+    expect(err.reason).toBeNull();
+  });
+
   test("has a null status but still carries the endpoint on a network failure (no HTTP response to attribute a status to)", () => {
     const err = toCliError(new ModrinthApiError("connect failed", {}), "GET /modrinth/v0/servers/srv_123");
     expect(err.status).toBeNull();
@@ -706,6 +717,71 @@ describe("createRealTransport", () => {
 
       expect(caught).toBeInstanceOf(CliError);
       expect((caught as CliError).exitCode).toBe(ExitCode.NotFound);
+    });
+
+    test("getVersion resolves with the unmodified version on a 200 response", async () => {
+      const fetchSpy = mockFetch(
+        () =>
+          new Response(JSON.stringify(FIXTURE_CREATED_VERSION), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      );
+
+      const transport = createRealTransport();
+      const version = await transport.getVersion("v_new");
+      fetchSpy.mockRestore();
+
+      expect(version).toEqual(FIXTURE_CREATED_VERSION);
+    });
+
+    test("getVersion rejects with a CliError mapped from a 404 response", async () => {
+      const fetchSpy = mockFetch(() => new Response(JSON.stringify({ error: "not found" }), { status: 404 }));
+
+      const transport = createRealTransport();
+      let caught: unknown;
+      try {
+        await transport.getVersion("does-not-exist");
+      } catch (err) {
+        caught = err;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      expect((caught as CliError).exitCode).toBe(ExitCode.NotFound);
+      expect((caught as CliError).status).toBe(404);
+    });
+
+    test("deleteVersion resolves (no error) on a 2xx response", async () => {
+      const fetchSpy = mockFetch(() => new Response(null, { status: 204 }));
+
+      const transport = createRealTransport();
+      await expect(transport.deleteVersion("v_1")).resolves.toBeUndefined();
+      fetchSpy.mockRestore();
+    });
+
+    // The live API's documented quirk (see README): DELETE /v2/version/{id}
+    // returns 404 even when the delete succeeds. The transport method itself
+    // does not try to interpret that — it maps the 404 exactly like any
+    // other failed call; `versions delete` (src/commands/versions.ts) is
+    // what decides, via a read-back, whether a 404 here means success.
+    test("deleteVersion rejects with a CliError mapped from a 404 response, carrying the endpoint", async () => {
+      const fetchSpy = mockFetch(() => new Response(JSON.stringify({ error: "not found" }), { status: 404 }));
+
+      const transport = createRealTransport();
+      let caught: unknown;
+      try {
+        await transport.deleteVersion("v_1");
+      } catch (err) {
+        caught = err;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      const cliError = caught as CliError;
+      expect(cliError.exitCode).toBe(ExitCode.NotFound);
+      expect(cliError.status).toBe(404);
+      expect(cliError.endpoint).toBe("DELETE /v2/version/v_1");
     });
 
     test("createVersion sends the Bearer token, a descriptive User-Agent, and no Content-Type override, resolving with the created version on 200", async () => {

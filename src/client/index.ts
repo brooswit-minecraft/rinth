@@ -128,6 +128,10 @@ export interface Transport {
   getProject(idOrSlug: string): Promise<Labrinth.Projects.v2.Project>;
   /** POST labrinth `/version` (v2), multipart — creates a version with its file attached. See `src/client/real.ts` for why this bypasses the API client's own upload path. */
   createVersion(data: CreateVersionRequest, file: CreateVersionFile): Promise<Labrinth.Versions.v2.Version>;
+  /** GET labrinth `/version/{id}` (v2) — a single version, unmodified API shape. Used by `versions delete`'s read-back verification. */
+  getVersion(id: string): Promise<Labrinth.Versions.v2.Version>;
+  /** DELETE labrinth `/version/{id}` (v2). The live API returns 404 even when the delete succeeds — see `versions delete` in `src/commands/versions.ts`, which never trusts this call's status code on its own and always reads the version back afterward. */
+  deleteVersion(id: string): Promise<void>;
 }
 
 export { createRealTransport } from "./real.ts";

@@ -3,14 +3,26 @@
 // an exit code. All output (including "unknown command") goes through
 // src/output.ts so it can never bypass redaction.
 
+import { realClock, type Clock } from "./clock.ts";
 import { createRealTransport, type Transport } from "./client/index.ts";
 import { commands } from "./commands/index.ts";
 import { CliError, ExitCode } from "./errors.ts";
 import { printError, printHuman, printJsonError } from "./output.ts";
 
-/** Shape of the single JSON value `--json` mode prints to stderr on any error. */
-function jsonError(code: ExitCode, status: number | null, endpoint: string | null, message: string) {
-  return { error: { code, status, endpoint, message } };
+/**
+ * Shape of the single JSON value `--json` mode prints to stderr on any
+ * error. `reason` is additive (RINTH-6/RINTH-2) — a stable machine-readable
+ * string alongside `code`, `null` when no command-specific reason applies —
+ * the rest of the shape is unchanged.
+ */
+function jsonError(
+  code: ExitCode,
+  status: number | null,
+  endpoint: string | null,
+  message: string,
+  reason: string | null = null,
+) {
+  return { error: { code, status, endpoint, message, reason } };
 }
 
 export interface ParsedArgs {
@@ -42,6 +54,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
 export interface RunDeps {
   /** Injected for tests; defaults to the real network transport. */
   transport?: Transport;
+  /** Injected for tests; defaults to the real wall-clock/timers (see src/clock.ts). */
+  clock?: Clock;
 }
 
 export async function run(argv: string[], deps: RunDeps = {}): Promise<number> {
@@ -72,12 +86,13 @@ export async function run(argv: string[], deps: RunDeps = {}): Promise<number> {
       get transport(): Transport {
         return (resolvedTransport ??= deps.transport ?? createRealTransport());
       },
+      clock: deps.clock ?? realClock,
     };
     return await command.run(parsed.rest, ctx);
   } catch (err) {
     if (err instanceof CliError) {
       if (parsed.json) {
-        printJsonError(jsonError(err.exitCode, err.status, err.endpoint, err.message));
+        printJsonError(jsonError(err.exitCode, err.status, err.endpoint, err.message, err.reason));
       } else {
         printError(err.message);
       }

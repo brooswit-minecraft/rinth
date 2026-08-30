@@ -19,6 +19,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { Labrinth } from "@modrinth/api-client";
 import type { CreateVersionDependency, CreateVersionFile, CreateVersionRequest } from "../client/index.ts";
+import { diagnoseNotFound } from "../diagnose.ts";
 import { CliError, ExitCode } from "../errors.ts";
 import { printHuman, printJson } from "../output.ts";
 import type { Command, CommandContext } from "./types.ts";
@@ -188,7 +189,15 @@ async function run(args: string[], ctx: CommandContext): Promise<number> {
     return ExitCode.Ok;
   }
 
-  const project = await ctx.transport.getProject(flags.project);
+  let project: Labrinth.Projects.v2.Project;
+  try {
+    project = await ctx.transport.getProject(flags.project);
+  } catch (err) {
+    if (err instanceof CliError) {
+      throw diagnoseNotFound(err, `Project ${flags.project}`);
+    }
+    throw err;
+  }
 
   const existingVersions = await ctx.transport.listVersions(project.id);
   const duplicate = existingVersions.find((v) => v.version_number === flags.version);
