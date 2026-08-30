@@ -36,3 +36,19 @@ export const hasTestProject = Boolean(RINTH_TEST_PROJECT);
 if (!hasTestProject) {
   console.log("RINTH_TEST_PROJECT not set — skipping publish integration test");
 }
+
+/**
+ * Opt-in for `project create`'s integration test, which — if it runs at all
+ * — creates a real (throwaway, immediately-deleted) draft project. Boolean
+ * presence, not a project name: unlike `RINTH_TEST_PROJECT`, `project
+ * create` doesn't target an existing project, it makes a new one. Follows
+ * `RINTH_TEST_PROJECT`'s pattern (a second, explicit gate on top of
+ * `MODRINTH_TOKEN`) per the ticket's requirement — a distinct name so it
+ * can't be satisfied accidentally by an operator who already has
+ * `RINTH_TEST_PROJECT` set for the publish/delete tests.
+ */
+export const RINTH_TEST_CREATE_PROJECT = Boolean(process.env["RINTH_TEST_CREATE_PROJECT"]);
+
+if (!RINTH_TEST_CREATE_PROJECT) {
+  console.log("RINTH_TEST_CREATE_PROJECT not set — skipping project create integration test");
+}

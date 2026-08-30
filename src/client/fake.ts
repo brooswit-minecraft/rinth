@@ -9,6 +9,8 @@ import { CliError, type CliErrorOptions, type ExitCode } from "../errors.ts";
 import type { Archon, Labrinth } from "@modrinth/api-client";
 import type {
   ConsoleSocket,
+  CreateProjectIconFile,
+  CreateProjectRequest,
   CreateVersionFile,
   CreateVersionRequest,
   PowerAction,
@@ -39,16 +41,22 @@ export interface FakeTransportFixtures {
   /** Called synchronously with the exact args `listVersions` received, so tests can assert filter pass-through. */
   onListVersions?: (project: string, filters: VersionFilters | undefined) => void;
   /**
-   * A function lets a test return a DIFFERENT project across successive
-   * `getProject` calls — e.g. `project edit`/`project icon`'s read-back
-   * verification, which needs the "before" and "after" reads to differ (or
-   * deliberately not differ, to test the unchanged-field failure). A bare
-   * value is a fixed answer for every call, same as `version` below.
+   * `getProject`'s result. A function lets a test return a DIFFERENT
+   * project across successive `getProject` calls — `project edit`/`project
+   * icon`'s read-back verification, and `project submit`'s
+   * read-then-read-back (draft, then processing), both need the "before"
+   * and "after" reads to differ (or deliberately not differ, to test the
+   * unchanged failure). A bare value is a fixed answer for every call, same
+   * as `version` below.
    */
   project?: Labrinth.Projects.v2.Project | (() => Labrinth.Projects.v2.Project);
   projectError?: CliError;
   /** Called synchronously with the exact arg `getProject` received. */
   onGetProject?: (idOrSlug: string) => void;
+  createdProject?: Labrinth.Projects.v2.Project;
+  createProjectError?: CliError;
+  /** Called synchronously with the exact args `createProject` received. */
+  onCreateProject?: (data: CreateProjectRequest, icon: CreateProjectIconFile | undefined) => void;
   updateProjectError?: CliError;
   /** Called synchronously with the exact args `updateProject` received — how tests prove the sparse-PATCH body. */
   onUpdateProject?: (idOrSlug: string, patch: Record<string, unknown>) => void;
@@ -201,6 +209,17 @@ export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Trans
           ? fixtures.deleteVersionError()
           : fixtures.deleteVersionError;
       }
+    },
+
+    async createProject(data, icon) {
+      fixtures.onCreateProject?.(data, icon);
+      if (fixtures.createProjectError) {
+        throw fixtures.createProjectError;
+      }
+      if (!fixtures.createdProject) {
+        throw new Error("createFakeTransport: no `createdProject` fixture provided");
+      }
+      return fixtures.createdProject;
     },
   };
 }
