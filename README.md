@@ -67,16 +67,67 @@ with that second box's own `/home` listing (`booswrit`, `brooswit`, no
 places `booswrit` there and confirms `brooswit` has an account on both
 machines.
 
+**Upgrading an existing install? `bun remove -g` FIRST.** Running
+`bun install -g "github:...#<newtag>"` over an existing pin of the same
+package **silently does nothing**, and reports success while doing it. Both
+accounts below were re-pinned from `v0.8.0` to `v0.9.0`, and the first
+attempt failed exactly this way:
+
+```
+$ bun install -g "github:brooswit-minecraft/rinth#v0.9.0"
+installed @brooswit/rinth@github:brooswit-minecraft/rinth#4f11b4d with binaries:
+ - rinth
+[611.00ms] done
+```
+
+Exit 0, and it even names the correct `v0.9.0` commit. But
+`~/.bun/install/global/package.json` came out with a **duplicate key** —
+the new entry was appended rather than replacing the old one, and the stale
+`v0.8.0` entry won resolution:
+
+```json
+{
+  "dependencies": {
+    "@brooswit/rinth": "github:brooswit-minecraft/rinth#v0.8.0",
+    "@brooswit/rinth": "github:brooswit-minecraft/rinth#v0.9.0"
+  }
+}
+```
+
+The package left on disk was still `0.8.0`. Remove first:
+
+```sh
+bun remove -g @brooswit/rinth   # confirm the manifest entry and ~/.bun/bin/rinth are gone
+bun install -g "github:brooswit-minecraft/rinth#v0.9.0"
+```
+
+**And check a version-distinguishing flag, not just `--help`.** The two
+proofs used below — `rinth --help` and the exit-3 auth check — pass
+*identically* on `v0.8.0` and `v0.9.0`, so they would have certified that
+failed upgrade. Confirm the manifest has exactly one entry, that
+`~/.bun/install/global/node_modules/@brooswit/rinth/package.json` reports
+the expected `version`, and that a flag only the new release has is
+actually present:
+
+```sh
+env -i HOME="$HOME" TERM=xterm /usr/bin/fish -l -c 'rinth versions' 2>&1 | grep -c version-number
+```
+
+Note the `2>&1`: `rinth versions` writes its usage string to **stderr**, so
+piping stdout alone returns a false-negative `0` while the flag prints in
+plain sight. (The flag also appears as `[--version-number <v>]`, so match
+the substring rather than splitting on spaces — both of those false
+negatives were hit for real while verifying this.)
+
 **Installed on `wroosbit`@`servyboi`:**
 
 ```sh
 export PATH="$HOME/.bun/bin:$PATH"   # only needed for this one-off install command
-bun install -g "github:brooswit-minecraft/rinth#v0.8.0"
+bun install -g "github:brooswit-minecraft/rinth#v0.9.0"
 ```
 
-This resolves the annotated tag `v0.8.0` (tag object `608cb8695b2796a663d82f3a623d974dabc18eb7`,
-dereferencing to commit `4ec35d9dee1bcc1bb4a590213ffe713024c9f1de` — the sha
-RINTH-9 tagged and pushed) and drops a `rinth` shim, a symlink to the
+This resolves the annotated tag `v0.9.0` (tag object `4f11b4d1b15ceb67f4917aa08d1e6861e25440e6`,
+dereferencing to commit `ade54a115ff3ec40448d49527047542fb9ef59b9`) and drops a `rinth` shim, a symlink to the
 package's `src/cli.ts`, into `~/.bun/bin`. Chosen over the `bunx --bun`
 wrapper-script alternative because it's already how this box installs
 sibling tools (e.g. `drovr`) and it was verified to actually run the
@@ -120,6 +171,14 @@ MODRINTH_TOKEN is not set. Set it with: export MODRINTH_TOKEN=<your Modrinth API
 EXIT_STATUS=3
 ```
 
+And the version-distinguishing check, which is what actually proves the
+re-pin landed rather than merely that some `rinth` resolved:
+
+```
+$ env -i HOME="$HOME" TERM=xterm /usr/bin/fish -l -c 'rinth versions' 2>&1 | grep -c version-number
+1
+```
+
 No `MODRINTH_TOKEN` is set in `wroosbit`@`servyboi`'s environment, so the
 auth-check failure above (exit 3, naming `MODRINTH_TOKEN`) is the strongest
 available proof on this box — it confirms the real binary resolved from
@@ -133,11 +192,11 @@ so this install was performed and verified by the `booswrit` account
 directly, on that box, using the identical mechanism and tag:
 
 ```sh
-bun install -g "github:brooswit-minecraft/rinth#v0.8.0"
+bun install -g "github:brooswit-minecraft/rinth#v0.9.0"
 ```
 
 ```
-installed @brooswit/rinth@github:brooswit-minecraft/rinth#608cb86 with binaries:
+installed @brooswit/rinth@github:brooswit-minecraft/rinth#4f11b4d with binaries:
  - rinth
 ```
 
@@ -145,7 +204,7 @@ Pinned to the same tag, recorded literally in
 `~/.bun/install/global/package.json`:
 
 ```json
-{ "dependencies": { "@brooswit/rinth": "github:brooswit-minecraft/rinth#v0.8.0" } }
+{ "dependencies": { "@brooswit/rinth": "github:brooswit-minecraft/rinth#v0.9.0" } }
 ```
 
 PATH persistence needed the same fish fix (`fish_user_paths` was empty on
@@ -170,6 +229,15 @@ EXIT=0
 $ env -i HOME="$HOME" TERM=xterm /usr/bin/fish -l -c 'rinth whoami; echo "EXIT_STATUS=$status"'
 MODRINTH_TOKEN is not set. Set it with: export MODRINTH_TOKEN=<your Modrinth API token>
 EXIT_STATUS=3
+```
+
+And the same version-distinguishing check:
+
+```
+$ env -i HOME="$HOME" TERM=xterm /usr/bin/fish -l -c 'rinth versions'
+Usage: rinth versions <list|latest|delete> <project|version_id> [--loader <l>]
+[--game-version <gv>] [--channel release|beta|alpha] [--version-number <v>]
+[--limit <n>] [latest only: --wait <seconds> [--wait-interval <seconds>]]
 ```
 
 No `MODRINTH_TOKEN` is set on this box either (`env | grep -i MODRINTH`
