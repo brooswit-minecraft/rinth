@@ -363,13 +363,22 @@ Verified against the `modrinth/code` frontend/backend @ `0ab9100` and
 - Archon requires an `X-Panel-Version: 1` header on every request; a
   request missing it gets HTTP 426 *before* auth is even evaluated — see
   "Exit codes" below.
-- Everything above is the **v0** Archon servers surface. Whether the
-  **v1** surface (`GET /v1/servers`, `client.archon.servers_v1.list()`)
-  accepts a PAT was, as of RINTH-31/RINTH-32, an open question — v1 is a
+- Everything above is the **v0** Archon servers surface. The **v1**
+  surface (`GET /v1/servers`, `client.archon.servers_v1.list()`) is a
   different route and a v0 result is not evidence about it either way.
   `test/integration/servers-v1.integration.test.ts` is a read-only probe
   (`list()` only, plus an invalid-token control) added to settle this in
-  CI; see "Testing" below for what it does and does not run.
+  CI — see "Testing" below for what it does and does not run.
+  **A single observed run** (RINTH-31/RINTH-32, rinth run `33676566812`,
+  `integration` job, PR #34, 2026-09-02T19:59:21Z UTC): `GET /v1/servers`
+  with the real PAT → **200**, and the returned server's `worlds` array
+  was non-empty with a world carrying a non-empty string `id` — i.e. a
+  world id was obtainable from this route with just `MODRINTH_TOKEN`, no
+  per-server GET required. The same call with a deliberately invalid
+  token → **401**, distinguishable from the real-PAT result. This is one
+  observed run, not a settled permanent property of the API, and it says
+  nothing about the v0 findings above — do not read it as superseding or
+  explaining them.
 
 ## `--json`
 

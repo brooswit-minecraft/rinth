@@ -80,7 +80,11 @@ left untouched. `--json` is byte-for-byte unchanged everywhere.
   Logs counts and booleans only (server count, whether each server's
   `worlds` array is non-empty, how many worlds carry a non-empty string
   `id`) — never server ids, names, or any credential. Loud, unmissable skip
-  line when `MODRINTH_TOKEN` is unset.
+  line when `MODRINTH_TOKEN` is unset. First observed run (rinth run
+  `33676566812`, `integration` job, PR #34, 2026-09-02T19:59:21Z UTC):
+  real PAT → 200 with an obtainable world id; invalid token → 401,
+  distinguishable. See README "Authentication" for the full record — a
+  single observed run, not a settled permanent property.
 
 ### Documentation
 
