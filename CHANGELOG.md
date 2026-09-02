@@ -67,6 +67,20 @@ left untouched. `--json` is byte-for-byte unchanged everywhere.
   `email` is PII the reader didn't ask for, and `payout_data`/`has_totp`/
   `has_password` are secret-adjacent; neither belongs on stdout regardless
   of whether it would help this decision.
+- RINTH-31/RINTH-32: `test/integration/servers-v1.integration.test.ts`, a
+  new, read-only integration test that probes the Archon **v1** servers
+  surface (`client.archon.servers_v1.list()` — `GET /v1/servers`, a
+  different surface from the v0 `servers list`/`get` routes already
+  covered by `servers.integration.test.ts`/`servers-manage.integration.test.ts`)
+  with the real PAT, plus the identical call with a deliberately invalid
+  token as a mandatory positive control. It **reports rather than
+  asserts**: a 401/403/404 from Archon is a valid, passing, recorded
+  outcome, not a build failure — only a non-HTTP transport/client error, or
+  the invalid-token control itself unexpectedly succeeding, fails the test.
+  Logs counts and booleans only (server count, whether each server's
+  `worlds` array is non-empty, how many worlds carry a non-empty string
+  `id`) — never server ids, names, or any credential. Loud, unmissable skip
+  line when `MODRINTH_TOKEN` is unset.
 
 ### Documentation
 

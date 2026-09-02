@@ -363,6 +363,13 @@ Verified against the `modrinth/code` frontend/backend @ `0ab9100` and
 - Archon requires an `X-Panel-Version: 1` header on every request; a
   request missing it gets HTTP 426 *before* auth is even evaluated — see
   "Exit codes" below.
+- Everything above is the **v0** Archon servers surface. Whether the
+  **v1** surface (`GET /v1/servers`, `client.archon.servers_v1.list()`)
+  accepts a PAT was, as of RINTH-31/RINTH-32, an open question — v1 is a
+  different route and a v0 result is not evidence about it either way.
+  `test/integration/servers-v1.integration.test.ts` is a read-only probe
+  (`list()` only, plus an invalid-token control) added to settle this in
+  CI; see "Testing" below for what it does and does not run.
 
 ## `--json`
 
@@ -1902,6 +1909,18 @@ anywhere else (see `test/unit/cli.test.ts`).
   ```sh
   MODRINTH_TOKEN=... RINTH_TEST_SERVER_ID=... bun run test:integration
   ```
+
+  `test/integration/servers-v1.integration.test.ts` (RINTH-31/RINTH-32) is a
+  read-only probe of the separate Archon **v1** servers surface
+  (`client.archon.servers_v1.list()`, distinct from the v0 `servers
+  list`/`get` routes covered by the other integration tests above) — see
+  "Authentication" above. It only needs `MODRINTH_TOKEN` (no server id) and
+  is not destructive; it **reports** the observed HTTP status rather than
+  asserting a particular one, so a 401/403/404 from Archon is a passing,
+  recorded outcome, not a test failure. It also runs the identical call
+  with a deliberately invalid token as a positive control. With
+  `MODRINTH_TOKEN` unset it prints an explicit `SERVERS V1 LIST PROBE: DID
+  NOT RUN` line rather than skipping silently.
 
 ## Changelog / version gate
 
