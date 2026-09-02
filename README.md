@@ -4,7 +4,7 @@ A Modrinth CLI (servers management + publish) wrapping [`@modrinth/api-client`](
 One tested surface usable both by a human at a shell and by CI — there is no
 official Modrinth CLI.
 
-Status: v0.9.1. Full command surface: `whoami`; `servers
+Status: v0.9.2. Full command surface: `whoami`; `servers
 list|get|power|upstream|exec`; `versions list|latest|delete`; `publish`;
 `project get|create|submit|edit|icon`. See "Known gaps / follow-ups" below
 for what still doesn't work against the live API.
@@ -15,7 +15,7 @@ Pin to a released tag — **not** a branch — so a consumer's install can't
 silently change under them:
 
 ```sh
-bunx --bun github:brooswit-minecraft/rinth#v0.9.1 --help
+bunx --bun github:brooswit-minecraft/rinth#v0.9.2 --help
 ```
 
 The `--bun` flag is required: it tells `bunx` to run the package's `bin`
@@ -29,7 +29,7 @@ TypeScript source under bun.
 - uses: oven-sh/setup-bun@v2
   with:
     bun-version: latest
-- run: bunx --bun github:brooswit-minecraft/rinth#v0.9.1 versions latest sodium --loader fabric --json
+- run: bunx --bun github:brooswit-minecraft/rinth#v0.9.2 versions latest sodium --loader fabric --json
   env:
     MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
 ```
@@ -98,7 +98,7 @@ The package left on disk was still `0.8.0`. Remove first:
 
 ```sh
 bun remove -g @brooswit/rinth   # confirm the manifest entry and ~/.bun/bin/rinth are gone
-bun install -g "github:brooswit-minecraft/rinth#v0.9.1"
+bun install -g "github:brooswit-minecraft/rinth#v0.9.2"
 ```
 
 **And check a version-distinguishing flag, not just `--help`.** The two
@@ -134,7 +134,7 @@ unchanged. The commands show the version to install today.
 
 ```sh
 export PATH="$HOME/.bun/bin:$PATH"   # only needed for this one-off install command
-bun install -g "github:brooswit-minecraft/rinth#v0.9.1"
+bun install -g "github:brooswit-minecraft/rinth#v0.9.2"
 ```
 
 This resolves the named annotated tag (never a branch) and drops a `rinth` shim, a symlink to the
@@ -202,7 +202,7 @@ so this install was performed and verified by the `booswrit` account
 directly, on that box, using the identical mechanism and tag:
 
 ```sh
-bun install -g "github:brooswit-minecraft/rinth#v0.9.1"
+bun install -g "github:brooswit-minecraft/rinth#v0.9.2"
 ```
 
 ```
@@ -214,7 +214,7 @@ Pinned to the same tag, recorded literally in
 `~/.bun/install/global/package.json`:
 
 ```json
-{ "dependencies": { "@brooswit/rinth": "github:brooswit-minecraft/rinth#v0.9.1" } }
+{ "dependencies": { "@brooswit/rinth": "github:brooswit-minecraft/rinth#v0.9.2" } }
 ```
 
 PATH persistence needed the same fish fix (`fish_user_paths` was empty on
@@ -347,19 +347,27 @@ Verified against the `modrinth/code` frontend/backend @ `0ab9100` and
   calls — `whoami`, `versions list/latest`, `publish` (given the relevant
   PAT scopes) — and for the Archon **`servers list`** route.
 - A PAT **does not work** for per-server Archon routes (`servers
-  get`/`power`/`exec`): they return HTTP 403. This is an identity wall,
-  not a missing scope — labrinth's PAT scope enum has no
+  get`/`power`/`exec`): they return HTTP 403. This is an upstream
+  limitation, not a missing scope — labrinth's PAT scope enum has no
   servers/archon/hosting scope at all (verified in `models/v3/pats.rs`:
   `SHARED_INSTANCE` scopes exist; no `SERVER`/`ARCHON`/`PYRO` scope
-  matches anything). The web panel authenticates to Archon with the
-  user's browser *session* token (`mra_...`) instead, which is not a
-  CI-appropriate credential, and there is no endpoint that exchanges a
-  PAT for one.
+  matches anything, so no PAT can clear this check by acquiring one). The
+  web panel authenticates to Archon with the user's browser *session*
+  token (`mra_...`) instead — that is what the panel is observed to do,
+  not a claim about what Archon requires. Whether Archon would accept
+  some other, CI-obtainable credential is genuinely undecided: its
+  backend (`archon.modrinth.com`) is a separate service whose router and
+  auth guard are not published in `github.com/modrinth/code`, so no
+  amount of source-reading settles it — see "`servers upstream`'s open
+  question" under "Known gaps / follow-ups" below for what would.
 - The v0 `POST /servers/{id}/reinstall` route that `servers upstream`
-  targets is dead at the router: a deliberately invalid token gets 401 on
-  `GET /servers` but 404 on `reinstall`, proving the 404 is
-  route-not-found, independent of credentials (KAN-735, run
-  33203716833).
+  targets returns HTTP 404 regardless of credentials: a deliberately
+  invalid token gets 401 on `GET /servers` (a working, credential-checked
+  route) but the same 404 on `reinstall` (KAN-735, run 33203716833) — so
+  the 404 is not a rejected-credential response. What inside Archon
+  actually produces it is not visible from outside Modrinth — see
+  "`servers upstream`'s open question" under "Known gaps / follow-ups"
+  below.
 - Archon requires an `X-Panel-Version: 1` header on every request; a
   request missing it gets HTTP 426 *before* auth is even evaluated — see
   "Exit codes" below.
@@ -681,25 +689,40 @@ WebSocket auth all return 403 Forbidden with an empty body, while
 (not 403; `resolveProjectId` against labrinth succeeded first, so the 404
 is from Archon's `/reinstall` route itself, not project/slug resolution).
 This is not fixable by editing the PAT's scopes — labrinth's PAT scope enum
-has no `SERVERS_*` scope at all, so per-server access most likely requires
-session-level (browser-issued JWT) identity a PAT cannot carry.
+has no `SERVER`/`ARCHON`/`PYRO` scope at all, so no PAT can clear this
+check by acquiring a missing scope. What credential (if any) *would* clear
+it is undecided: Archon's backend source is not published in
+`github.com/modrinth/code`, so what its own check actually keys on cannot
+be read (see "Known gaps / follow-ups").
 
-Why `reinstall` 404s instead of 403ing like the rest is now confirmed, not
-just inferred: the identical request repeated with a deliberately invalid,
-never-real token still returned the exact same 404 "not found" — meaning
-the router never reaches an auth check for this route at all. Combined with
-a nonexistent server id and a second, different real modpack both getting
-the same byte-identical 404 (ruling out a pair- or server-specific cause),
-this is a router-level 404: **the v0 `/reinstall` route this CLI's
-`upstream` command targets does not resolve to anything live, regardless of
-credentials, server, or modpack.** (Source research on the `modrinth/code`
+Why `reinstall` 404s instead of 403ing like the rest: the identical
+request repeated with a deliberately invalid, never-real token still
+returned the exact same 404 "not found" — so **the 404 does not depend on
+the credential.** A nonexistent server id and a second, different real
+modpack both got the same byte-identical 404 too, ruling out a pair- or
+server-specific cause. **What produces this 404 inside Archon is not
+visible from outside Modrinth.** A 404 this shape — credential-, server-,
+and modpack-independent — cannot distinguish the route being absent,
+present but unmounted, or present, mounted, and 404ing from within for an
+unrelated reason; nothing available here picks between them, and this
+repo does not claim which. (Source research on the `modrinth/code`
 frontend independently found no current caller of `servers_v0.reinstall`;
-installs there go through a newer `content_v1` API instead — consistent
-with the v0 route being retired.) `upstream` is kept as built (it's
+installs there go through a newer `content_v1` API instead — a separate,
+source-only fact about the frontend's current caller graph, not a claim
+about why this route's HTTP response is what it is.) `upstream` is kept
+as built (it's
 `@modrinth/api-client`'s documented call, matching the route the live docs
-don't cover either way); migrating it to the v1 content API is a follow-up,
-not done here — it would need a world id from a per-server `GET` that is
-itself 403, so it couldn't be verified live.
+don't cover either way). A migration to the v1 content API is not
+attempted here. The reasoning that once ruled it out — that it would need
+a world id from a per-server `GET` that itself 403s — is wrong on the
+route side: `servers_v1.list()` (`GET /v1/servers`) takes no server id at
+all and returns the same `worlds[]`-bearing shape the id-scoped `get()`
+does (read-from-source: `@modrinth/api-client` 0.60.0 npm tarball, shasum
+`0a8f6224c632a8a2442dc054e6b4233fadfd2201`, and `modrinth/code` commit
+`ec5824331e51fed75069b170ee571b40899a9c6e`). That does not make the
+migration actionable — whether that route accepts a PAT at all is
+undecided — see "`servers upstream`'s open question" under "Known gaps /
+follow-ups" for the experiment that would settle it.
 
 This 404 and these 403s no longer reach a caller as bare API strings: see
 "`servers` diagnosis" below for the two sibling messages/`reason` values
@@ -1564,23 +1587,21 @@ published) is what makes "no match yet" retryable (exit 7,
 "Four distinguishable outcomes" below.
 
 **⚠️ The second step does not work against the live API today.** The v0
-`reinstall` route `servers upstream` calls is dead at the router — see
-"Authentication — what a token can and cannot do" above and "Known gaps /
-follow-ups" below. This recipe documents the intended shape of the deploy
-pipeline once `upstream` is migrated to the v1 content API; don't wire it
+`reinstall` route `servers upstream` calls returns HTTP 404 regardless of
+credentials — see "Authentication — what a token can and cannot do" above
+and "Known gaps / follow-ups" below. This recipe documents the intended
+shape of the deploy pipeline; whether and how it can be unblocked is a
+genuinely open question (see "Known gaps / follow-ups"), so don't wire it
 into a real pipeline yet.
 
 ## Known gaps / follow-ups
 
 - **`servers upstream` is non-functional against the live API — and this is
   not theoretical, it is a live breakage with a real consumer failing in
-  production right now.** The v0 `reinstall` route it calls is dead at the
-  router (404 regardless of credentials, server, or project); it needs
-  migration to the v1 content API (`POST
-  /v1/servers/{id}/worlds/{world}/content`), not done here (see "Scope
-  boundary" under RINTH-14's ticket, or the PR body, for why). Production
-  evidence, attributed rather than observed from this environment (there is
-  no `MODRINTH_TOKEN` here): `brooswit-minecraft/schematic`'s
+  production right now.** The v0 `reinstall` route it calls returns HTTP
+  404 regardless of token, server id, or project id. Production evidence,
+  attributed rather than observed from this environment (there is no
+  `MODRINTH_TOKEN` here): `brooswit-minecraft/schematic`'s
   `.github/workflows/reusable-server-update.yml` already calls `rinth
   servers upstream`, pinned to a pre-tag commit, in its deploy pipeline.
   Sickos run `33322343392` (2026-08-30T16:23:59Z) shows the step "Resolve
@@ -1588,16 +1609,41 @@ into a real pipeline yet.
   server", failing (step-level conclusions confirmed via the run API) —
   reported (SCHEM-6, verified by RINTH-1) failing on **every** Server
   update run since 2026-08-29T00:52, with a valid token and correct
-  `SERVER_ID`/`PROJECT_ID`/`VERSION_ID`. A caller in that position sees
-  exit 4 (`NotFound`) with `reason: "servers_upstream_route_dead"` — see
-  "`rinth servers upstream`" above and "Errors under `--json`" below for
-  what that message now says instead of a bare 404.
+  `SERVER_ID`/`PROJECT_ID`/`VERSION_ID`.
+  **The token is not the cause — say this plainly.** Two independent
+  controls converge: RINTH-1's constructed invalid-token control (a
+  deliberately invalid token gets this exact same 404), and a control
+  internal to sickos run `33328854920` where `rinth versions latest`
+  succeeded with the same `MODRINTH_TOKEN` seconds before the reinstall
+  call 404'd. **There is nothing to change about your token, server, or
+  project.**
+  **What produces the 404 is not visible from outside Modrinth** — the
+  `servers`/Archon routes live in `archon.modrinth.com`, a service whose
+  backend source is not published in `github.com/modrinth/code`. A 404
+  this shape cannot distinguish the route being absent, present but
+  unmounted, or present, mounted, and 404ing from within for an unrelated
+  reason — this bullet does not claim which.
+  **The world-id blocker this migration was previously cut on is
+  disproven.** `GET /v1/servers` (`servers_v1.list()`) takes no server id
+  at all and returns the same `worlds[]`-bearing shape the id-scoped
+  `get()` does, so a world id no longer *requires* the per-server `GET`
+  that 403s. The honest limit: that route's own PAT-reachability is
+  unknown, so this makes the migration live again, not actionable.
+  **Whether any CI-obtainable credential can reach the v1 servers surface
+  at all is genuinely undecided.** See "`servers upstream`'s open
+  question" below for the full account and the one experiment that would
+  settle it. A caller hitting this today sees exit 4 (`NotFound`) with
+  `reason: "servers_upstream_route_dead"` — see "`rinth servers
+  upstream`" above and "Errors under `--json`" below for what that
+  message now says instead of a bare 404.
 - **`servers get`/`power`/`exec` require a credential Archon accepts for
-  that specific server** — a PAT is refused with 403 today; only a
-  browser session token works, and there's no way to obtain one in CI. A
-  caller sees exit 3 (`AuthMissing`) with `reason:
-  "servers_credential_refused"`, naming the specific server — see
-  "Authentication — what a token can and cannot do" above.
+  that specific server** — a PAT is refused with 403 today. This is an
+  upstream limitation, not a missing PAT scope: labrinth's PAT scope enum
+  has no `SERVER`/`ARCHON`/`PYRO` scope at all. What credential (if any)
+  *would* be accepted is undecided — see "Authentication — what a token
+  can and cannot do" above and "`servers upstream`'s open question" below.
+  A caller sees exit 3 (`AuthMissing`) with `reason:
+  "servers_credential_refused"`, naming the specific server.
 - **The `publish` success path has never been exercised against the live
   API** — `test/integration/publish.integration.test.ts` is gated on
   `RINTH_TEST_PROJECT`, which is deliberately left unset.
@@ -1663,6 +1709,68 @@ into a real pipeline yet.
   Modrinth's human moderation queue, a side effect on a third party that
   cannot be undone by deleting something afterward. Only the refusal path
   (which never PATCHes) is exercised live, against a real approved project.
+
+### `servers upstream`'s open question: is the v1 route reachable from CI at all?
+
+The v0 `reinstall` route returns HTTP 404 regardless of credentials, and
+what produces that 404 is not visible from outside Modrinth (see above).
+Migrating to the v1 content API is not attempted in this repo, and
+whether it *can* be reached from CI is genuinely undecided — not because
+nobody has looked, but because the code that would settle it is not
+public.
+
+**Why it's undecided.** `servers`/Archon routes are not implemented in
+`labrinth` (Modrinth's public API repo, `github.com/modrinth/code`) — they
+go to a separate service, `archon.modrinth.com`, whose router and auth
+guard are not published anywhere in that repo (read-from-source at commit
+`ec5824331e51fed75069b170ee571b40899a9c6e`; no submodule or pointer to
+where Archon's source lives was found either). No amount of source-reading
+against the public repo can determine what a v1 servers call would return
+for a PAT — only a live call can.
+
+**The blocker this migration was previously cut on is disproven on the
+route side.** It was cut on "it needs a world id from a per-server `GET`
+that itself 403s." That is wrong: `servers_v1.list()` (`GET
+/v1/servers`) takes **no server id at all**, and returns the same
+`worlds[]`-bearing shape the id-scoped `get()` does (read-from-source: the
+published `@modrinth/api-client` 0.60.0 npm tarball, shasum
+`0a8f6224c632a8a2442dc054e6b4233fadfd2201`, and `modrinth/code` at the
+pinned commit above). **The honest limit:** this only shows a world id is
+obtainable from a route that needs no server id — it says nothing about
+whether *that* route accepts a PAT. That is the open question.
+
+**The experiment that would settle it.** Requires a real Modrinth-hosted
+server and the existing `MODRINTH_TOKEN` PAT — no new credential is
+needed for step 1. Everything below must go through
+`@modrinth/api-client`, never hand-rolled `curl`: an unauthenticated probe
+against Archon is provably uninformative — every path tried, including
+one the client itself marks `skipAuth` and used as a control, returns an
+identical `HTTP 426 "unsupported archon request version"` before any
+routing decision is made.
+
+1. Call `client.archon.servers_v1.list()` (`GET /v1/servers`, no server
+   id) with the existing PAT.
+   - `200` with `worlds[]` carrying ids → the v1 surface accepts a PAT,
+     world ids are in hand, and the migration is unblocked.
+   - `403` → the boundary covers v1 listing too.
+   - `404` → the v1 servers surface is not routed for this caller.
+2. **Mandatory control:** repeat step 1 with a deliberately invalid token.
+   A byte-identical response to step 1 means the result is a **router**
+   fact, not a **credential** fact — without this control, a 404 or 403 in
+   step 1 means very little. This is the same control that made the v0
+   reinstall-404 finding above trustworthy in the first place.
+3. Only if step 1 returns a world id: call
+   `client.archon.content_v1.installContent(serverId, worldId, { content_variant: 'modpack', spec: { platform: 'modrinth', project_id, version_id }, soft_override: false })`,
+   then **read the server back** and confirm the world's content actually
+   changed. A `2xx` response is not itself proof — a route that accepts
+   the write, returns success, and changes nothing is exactly the failure
+   mode that motivated rewriting `project submit` earlier in this
+   project's history (see "`rinth project submit`" above).
+
+This repo does not run this experiment: it requires a live Modrinth
+account holder holding both the PAT and a real server, and no
+`MODRINTH_TOKEN` exists in any environment this codebase's own tooling
+runs in.
 
 ## Exit codes
 
@@ -1747,21 +1855,26 @@ determined by which call produced it, so naming one confidently is honest,
 not a guess:
 
 - **`diagnoseUpstreamRouteDead`** rewrites a 404 from `servers upstream`'s
-  `reinstall` call (the only thing that call ever hits). This route is
-  proven dead at the router, independent of credentials, server, or
-  project — see "`rinth servers upstream`" above — so the message names the
-  route explicitly and states the remedy is a rinth-side migration to the
-  v1 content API, not anything the caller can change. Reason:
-  `"servers_upstream_route_dead"`.
+  `reinstall` call (the only thing that call ever hits). This call is
+  proven to 404 independent of credentials, server, or project — see
+  "`rinth servers upstream`" above for what is (and isn't) established
+  about why — so the message names the route explicitly and states this
+  is a known upstream condition whose resolution is undecided, pointing
+  at "Known gaps / follow-ups" rather than claiming a known remedy or a
+  mechanism. Reason: `"servers_upstream_route_dead"` — the reason string
+  keeps this wording as a stable machine contract a fail-closed CI
+  consumer branches on; it is not itself a claim about why the 404
+  happens (see the comment above the constant in `src/diagnose.ts`).
 - **`diagnoseServerCredentialRefused`** rewrites a 403 from any per-server
   Archon endpoint (`servers get`, `power`, `exec`'s WebSocket auth, and
   `upstream`'s post-reinstall read-back). Every one of these routes rejects
   a PAT identically — confirmed from labrinth's published PAT scope enum
   (there is no `SERVER`/`ARCHON`/`PYRO` scope at all, see "Authentication —
-  what a token can and cannot do" above) — so a 403 here is always the
-  identity wall, never an ownership/permissions question a different PAT
-  could fix. The message names the specific server and points at
-  "Authentication — what a token can and cannot do". Reason:
+  what a token can and cannot do" above) — so a 403 here is an upstream
+  limitation, not something a different PAT could fix by acquiring a
+  missing scope. What credential (if any) *would* satisfy it is undecided,
+  and the message does not claim to know. It names the specific server and
+  points at "Authentication — what a token can and cannot do". Reason:
   `"servers_credential_refused"`.
 
 `servers upstream`'s project-resolution step (`--project <slug|id>` ->
@@ -1769,10 +1882,10 @@ not a guess:
 through the existing `diagnoseNotFound` (reason `"project_unreadable"`)
 instead of a third helper — reusing the shared helper rather than
 duplicating it, per RINTH-14. `servers list` is untouched: `GET
-/modrinth/v0/servers` is not a per-server route and is not known to be
-dead, so there is nothing here to diagnose.
+/modrinth/v0/servers` is not a per-server route and is not known to fail
+the way `reinstall` does, so there is nothing here to diagnose.
 
-Because the 404 (dead route) and the 403 (identity wall) never overlap —
+Because the 404 (reinstall 404) and the 403 (credential refused) never overlap —
 different status codes, different call sites, both independently proven —
 there is no genuinely ambiguous case between them to name, unlike the
 project/version 404. If that ever stops being true (e.g. a future Archon
@@ -1791,16 +1904,16 @@ so a consumer can switch on a stable string instead of memorizing exit
 codes — e.g. `"auth"`, `"project_unreadable"`, `"no_version_match"`,
 `"wait_exhausted"`, `"update_not_landed"` (`project edit`'s read-back
 verification), `"icon_not_landed"` (`project icon`'s),
-`"servers_upstream_route_dead"` (`servers upstream`'s dead v0 `reinstall`
-route), `"servers_credential_refused"` (a per-server Archon 403 — see
-"`servers` diagnosis" above). `reason` is purely additive: every other
+`"servers_upstream_route_dead"` (`servers upstream`'s v0 `reinstall` call,
+which 404s regardless of credentials), `"servers_credential_refused"` (a
+per-server Archon 403 — see "`servers` diagnosis" above). `reason` is purely additive: every other
 field keeps its existing name and meaning.
 
 - **Plain text** (`--json` not set): the stderr message includes status and
   endpoint when present, e.g.
 
   ```
-  Server ff783f0f-ec3c-4037-b39f-452ce590891d refused this credential (HTTP 403). A labrinth PAT cannot carry per-server Archon access — this is an identity wall, not a missing PAT scope (there is no SERVER/ARCHON/PYRO scope at all). Only a browser session token works here, and there is no way to obtain one in CI. See README "Authentication — what a token can and cannot do".
+  Server ff783f0f-ec3c-4037-b39f-452ce590891d refused this credential (HTTP 403). This is an upstream limitation, not a misconfiguration on your end — labrinth's PAT scope enum has no SERVER/ARCHON/PYRO scope at all, so no PAT can satisfy this check by acquiring a missing scope. What credential (if any) can is undecided: Archon's backend is not public, so we do not know what clears it. See README "Authentication — what a token can and cannot do".
   ```
 
   When neither a status nor an endpoint applies (e.g. a usage error), the
@@ -1810,7 +1923,7 @@ field keeps its existing name and meaning.
   print) and a single JSON value is written to stderr:
 
   ```json
-  {"error":{"code":3,"status":403,"endpoint":"GET /modrinth/v0/servers/ff783f0f-ec3c-4037-b39f-452ce590891d","message":"Server ff783f0f-ec3c-4037-b39f-452ce590891d refused this credential (HTTP 403). A labrinth PAT cannot carry per-server Archon access — this is an identity wall, not a missing PAT scope (there is no SERVER/ARCHON/PYRO scope at all). Only a browser session token works here, and there is no way to obtain one in CI. See README \"Authentication — what a token can and cannot do\".","reason":"servers_credential_refused"}}
+  {"error":{"code":3,"status":403,"endpoint":"GET /modrinth/v0/servers/ff783f0f-ec3c-4037-b39f-452ce590891d","message":"Server ff783f0f-ec3c-4037-b39f-452ce590891d refused this credential (HTTP 403). This is an upstream limitation, not a misconfiguration on your end — labrinth's PAT scope enum has no SERVER/ARCHON/PYRO scope at all, so no PAT can satisfy this check by acquiring a missing scope. What credential (if any) can is undecided: Archon's backend is not public, so we do not know what clears it. See README \"Authentication — what a token can and cannot do\".","reason":"servers_credential_refused"}}
   ```
 
   `code` is the process exit code (same table as above); `status` is the raw

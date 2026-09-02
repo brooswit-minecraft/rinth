@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/). CI
 enforces that this file has a `## [<version>]` heading matching the
 `version` field in `package.json` — see README.md.
 
+## [0.9.2] - 2026-09-02
+
+Docs-and-messages patch: no API, flag, route, reason-string, or exit-code
+change. `servers upstream`'s diagnosis messages
+(`servers_upstream_route_dead`, `servers_credential_refused`) and this
+README's account of the same topic previously stated more than the
+evidence supports on three separate points: that the v0 `reinstall`
+route's 404 was known to originate "at the router" (a mechanism nobody
+established — the 404 is proven credential-independent, nothing more);
+that a v1 content-API migration was the understood, merely-pending
+remedy; and (in the README) that a browser session token is the
+credential Archon requires. None of the three was established: what
+inside Archon actually produces the 404 is not visible from outside
+Modrinth; the world-id blocker the migration was previously cut on is
+disproven on the route side, but that route's own PAT-reachability is
+undecided; and what credential (if any) clears the per-server 403 is
+undecided too — the `servers`/Archon routes live in a separate service
+whose backend source is not published in `github.com/modrinth/code`.
+
+This release rewrites both the messages and the README to state the
+settled facts plainly (this is an upstream limitation, it is not the
+caller's misconfiguration, and no token change fixes it), label what
+remains open, and record the one experiment that would settle it —
+without asserting a mechanism for the 404, and without asserting either
+that the capability is permanently unreachable or that it will work once
+migrated. `servers upstream` is not removed, deprecated, or marked
+unsupported; `servers_upstream_route_dead` keeps its name as a stable
+machine contract even though the prose above it no longer uses that
+wording; and no reason string or exit code changed.
+
+Two products consume `rinth` pinned to tags, so a docs-and-message change
+like this only reaches them through a release; `v0.9.1` was itself a
+docs-only patch, and this repo's own convention already supports patching
+for exactly this reason.
+
 ## [0.9.1] - 2026-08-30
 
 Docs-only patch. `v0.9.0` is functionally correct — `versions
