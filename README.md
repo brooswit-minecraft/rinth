@@ -560,7 +560,20 @@ forward.
 `GET https://api.modrinth.com/v2/user` (Bearer token). Prints the
 authenticated user.
 
-**JSON shape** — the raw Modrinth user object:
+**Human output** — `<username> (<id>) [<role>]`. **RINTH-22:** `role` was
+added because it's the field that actually answers what a reader runs
+`whoami` to check — "is this the identity/token I think it is" — in a way
+`username`/`id` alone can't (a moderator token behaves differently from a
+developer one). Nothing else on the user object was added: `email` is PII
+the reader didn't ask for, and `payout_data`/`has_totp`/`has_password` are
+secret-adjacent — none of those belong on stdout regardless of whether they
+would help this decision:
+
+```
+testuser (AbCdEfGh) [developer]
+```
+
+**JSON shape** — the raw Modrinth user object (unchanged by this ticket):
 
 ```json
 { "id": "...", "username": "...", "name": "...", "email": "...", "role": "developer", "badges": 0, "created": "..." }
@@ -797,22 +810,37 @@ can't see) is diagnosed rather than surfaced bare.
 rinth project get my-draft-modpack
 ```
 
-**Human output** — a readable summary:
+**Human output** — a readable summary. **RINTH-22:** this used to omit `description` and `body` entirely, with nothing hinting a fuller view existed — the human format could not display the two prose fields that ARE the Modrinth listing as a person reads it. Fixed: `description` (Modrinth's short one-line summary) prints in full; `body` (long-form markdown, can run to thousands of characters) is never dumped — it gets an honest length and a pointer at `--json`, the same treatment `versions list`'s `changelog` column and `project edit`'s read-back now give it. `moderator_message`/`requested_status` (present only on a project moving through moderation — e.g. after `rinth project submit` gets it rejected) and `additional_categories`/`license.url`/`wiki_url`/`discord_url`/`donation_urls`/`icon_url` (the same "external link"/categorization family `source_url`/`issues_url` were already in) are shown for the same reason: nothing else in this CLI's human output surfaces them, and each backs a decision reachable through this CLI's own commands:
 
 ```
 My Draft Modpack (AbCdEfGh)
-  slug:          my-draft-modpack
-  status:        draft
-  project_type:  modpack
-  client_side:   required
-  server_side:   optional
-  categories:    technology, utility
-  license:       MIT (MIT License)
-  source_url:    https://github.com/example/my-draft-modpack
-  issues_url:    none
+  slug:                   my-draft-modpack
+  status:                 draft
+  project_type:           modpack
+  client_side:            required
+  server_side:            optional
+  categories:             technology, utility
+  additional_categories:  none
+  license:                MIT (MIT License)
+  source_url:             https://github.com/example/my-draft-modpack
+  issues_url:             none
+  wiki_url:               none
+  discord_url:            none
+  donation_urls:          none
+  icon_url:               none
+  description:            A modpack that hasn't been approved yet
+  body:                   145 chars (use --json to read the full text)
 ```
 
-**`--json`** — the raw project object, unmodified API shape:
+`requested_status` and `moderator_message` are only printed when the project actually carries them (most projects, most of the time, do not) — e.g. a `status: rejected` project that also has a `requested_status` set shows:
+
+```
+  status:                 rejected
+  requested_status:       approved
+  moderator_message:      Please fix the license field before resubmitting.
+```
+
+**`--json`** — the raw project object, unmodified API shape (byte-for-byte unchanged by this ticket):
 
 ```json
 { "id": "AbCdEfGh", "slug": "my-draft-modpack", "status": "draft", "...": "..." }
@@ -885,6 +913,16 @@ Updated project My Draft Modpack (AbCdEfGh). Changed fields:
   categories:   technology, utility
 ```
 
+**RINTH-22:** `--body`/`--body-file` used to read back and print the FULL
+patched markdown — so `rinth project edit ... --body-file README.md` would
+dump an entire file to the terminal. `body` now gets the same length-pointer
+treatment `project get` gives it, never the raw text:
+
+```
+Updated project My Draft Modpack (AbCdEfGh). Changed fields:
+  body:  6104 chars (use --json to read the full text)
+```
+
 Like every command here, this resolves a **DRAFT** project via the
 authenticated path (see "Authentication" above), and a residual 404 (either
 from the `PATCH` itself or from the read-back) is diagnosed rather than
@@ -922,9 +960,8 @@ extensions (and the `Content-Type` sent with each):
 | `gif` | `image/gif` |
 | `webp` | `image/webp` |
 
-**Reconciled against the server source, which is narrower than the live
-docs this table used to cite.** labrinth's own extension→`Content-Type`
-mapping —
+**Reconciled against the server source, and the code now agrees with it.**
+labrinth's own extension→`Content-Type` mapping —
 [`apps/labrinth/src/util/ext.rs:3-11`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/util/ext.rs#L3-L11)'s
 `get_image_content_type()`, the function
 [`apps/labrinth/src/util/img.rs:57`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/util/img.rs#L57)'s
@@ -936,16 +973,14 @@ upload. The docs-sourced table this replaced also listed `svg`, `svgz`, and
 route today — `get_image_content_type()`'s match falls through to `None`
 for all three, which the caller turns into that same rejection. This
 command's own accepted-extension list (`ICON_CONTENT_TYPES` in
-`src/client/index.ts`) still includes `svg`/`svgz`/`rgb` from the
-docs-sourced reading; that mismatch is real and is not fixed here (a
-behavior change, out of scope for a docs-only evidence upgrade) — treat the
-table above, not `ICON_CONTENT_TYPES`, as the accurate list until that's
-reconciled in code.
+`src/client/index.ts`) has been narrowed to match: the table above and the
+code now agree, and the source of truth for both is `ext.rs`, not the
+published API docs.
 
 An unsupported extension is a usage error (exit 2) naming every extension
-`ICON_CONTENT_TYPES` accepts (currently the broader, docs-sourced list —
-see the reconciliation note above); a missing or nonexistent `--file` is
-also a usage error (exit 2), matching `publish --file`. **Size cap,
+`ICON_CONTENT_TYPES` accepts (the narrower, server-confirmed list above); a
+missing or nonexistent `--file` is also a usage error (exit 2), matching
+`publish --file`. **Size cap,
 confirmed from the server source**:
 [`apps/labrinth/src/routes/v3/projects.rs:2172-2176`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/routes/v3/projects.rs#L2172-L2176)
 reads the request body through `read_limited_from_payload(&mut payload,
@@ -1271,11 +1306,18 @@ rinth versions list sodium --loader fabric --game-version 1.20.4 --channel relea
 rinth versions list sodium --version-number 1.2.3
 ```
 
-**Human output** — an aligned table:
+**Human output** — an aligned table. **RINTH-22:** the old table's "primary
+file" column named exactly one file and said nothing about whether a version
+carried others; `changelog` (prose, potentially long) was dropped from the
+table entirely with no hint it existed; `dependencies` was dropped too. Now:
+`files` names the primary file plus, when there's more than one, how many
+more (`sodium-fabric-0.5.8+mc1.20.4.jar (+2 more)`); `changelog` is an honest
+char count, never the raw prose (same family as `project get`'s `body` —
+`--json` has the full text); `dependencies` is a count:
 
 ```
-id        version_number  channel  loaders  game versions  date                       primary file
-4GyXKCLd  mc1.20.4-0.5.8  release  fabric   1.20.4         2024-02-01T20:33:48.832862Z sodium-fabric-0.5.8+mc1.20.4.jar
+id        version_number  channel  loaders  game versions  date                         files                             changelog  dependencies
+4GyXKCLd  mc1.20.4-0.5.8  release  fabric   1.20.4         2024-02-01T20:33:48.832862Z  sodium-fabric-0.5.8+mc1.20.4.jar  69 chars   1
 ```
 
 **`--json`** — the array of version objects, **unmodified API shape** (an
@@ -1678,16 +1720,6 @@ follow-ups"), so don't wire it into a real pipeline yet.
   environment. `test/integration/project-icon.integration.test.ts`
   and `test/integration/project-edit.integration.test.ts` are both gated on
   `RINTH_TEST_PROJECT` like `publish`'s, which is deliberately left unset.
-- **`ICON_CONTENT_TYPES` (`src/client/index.ts:118-128`) accepts three
-  extensions labrinth's server source does not** — `svg`, `svgz`, and
-  `rgb`, carried over from the docs-sourced reading `project icon`'s
-  section above documents and reconciles. `rinth project icon <id> --file
-  logo.svg` passes rinth's own usage check and uploads, then fails at the
-  API, since `get_image_content_type()`
-  (`apps/labrinth/src/util/ext.rs:3-11`) doesn't match any of the three.
-  Fixing `ICON_CONTENT_TYPES` to the narrower, server-confirmed list
-  (`bmp`/`gif`/`jpeg`/`jpg`/`png`/`webp`) is a deliberate, deferred code
-  change — out of scope for the docs-only evidence upgrade that found it.
 - **Public reads still require `MODRINTH_TOKEN`** — there is no tokenless
   mode, even for routes the Modrinth API itself doesn't require auth for.
 - **npm publish under `@brooswit` is deferred** — it needs the

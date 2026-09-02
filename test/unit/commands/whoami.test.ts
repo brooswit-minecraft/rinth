@@ -34,8 +34,20 @@ describe("rinth whoami", () => {
     const code = await run(["whoami"], { transport });
 
     expect(code).toBe(ExitCode.Ok);
-    expect(logSpy).toHaveBeenCalledWith("testuser (abc123)");
+    expect(logSpy).toHaveBeenCalledWith("testuser (abc123) [developer]");
     logSpy.mockRestore();
+  });
+
+  test("human mode never prints email, even when the user object carries one (PII the reader didn't ask for)", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const transport = createFakeTransport({ user: { ...FIXTURE_USER, email: "user@example.com" } });
+
+    const code = await run(["whoami"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).not.toContain("user@example.com");
   });
 
   test.each([

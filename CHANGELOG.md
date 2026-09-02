@@ -58,6 +58,128 @@ like this only reaches them through a release; `v0.9.1` was itself a
 docs-only patch, and this repo's own convention already supports patching
 for exactly this reason.
 
+RINTH-12 (PR #27): `--help`/`-h` used to print the same two generic
+top-level lines everywhere; `rinth help` and `rinth --version` didn't
+exist. This section did not record it when it shipped, because there was
+no `[Unreleased]` section yet — RINTH-20 (below) created it afterward. That
+made RINTH-12's shipped work equally unreleased but undocumented here, so
+it's recorded now rather than left permanently missing from the record.
+
+### Added
+
+- `--help`/`-h` now routes to usage text specific to what preceded it on
+  the command line — top-level, command group, and (where a group's own
+  usage is already split per subcommand, e.g. `project`, `servers`) the
+  subcommand; where no per-subcommand split exists, help falls back to the
+  group-level usage. `rinth help [<command> [<subcommand>]]` is the same
+  routing spelled as a command instead of a flag.
+- `rinth --version` prints `package.json`'s version. Recognized only
+  *before* the command token, so it doesn't collide with `servers
+  upstream`'s/`publish`'s own `--version <id>` flags.
+- Top-level help is generated from the `commands` registry rather than
+  hand-copied, so a future registry addition can't silently go missing
+  from it.
+- All help/version paths exit `0`, need no `MODRINTH_TOKEN`, and build no
+  transport. Unknown top-level command and invalid subcommand are
+  unchanged: still exit `2`.
+
+RINTH-30: `rinth project icon`'s accepted-extension list used to include
+three extensions (`svg`, `svgz`, `rgb`) that labrinth's server does not
+accept, carried over from a docs-sourced reading rather than the server's
+own source. A caller passing one of those got past `rinth`'s own local
+usage check, spent the upload, and only then failed against the live API.
+
+### Changed
+
+- `ICON_CONTENT_TYPES` (`src/client/index.ts`) is narrowed to the six
+  extensions labrinth's server source (`get_image_content_type()` in
+  `apps/labrinth/src/util/ext.rs`) actually accepts: `bmp`, `gif`, `jpeg`,
+  `jpg`, `png`, `webp`. **This is a behaviour change, not a bugfix in the
+  exit-code sense**: a caller passing `.svg`/`.svgz`/`.rgb` now gets a
+  local usage error (**exit 2**) before any bytes are sent, instead of a
+  remote API failure (a different exit code, at a later moment) after the
+  bytes were already uploaded. Strictly better for the caller, but the
+  shape of the failure — where and when it happens — is different, not
+  merely fixed.
+
+RINTH-20/RINTH-22: human-format output used to be able to LOOK complete while
+structurally omitting the fields a reader most needed — confirmed in
+`project get`, whose human summary had no way to show `description`/`body`
+at all, and no hint that it couldn't. Fixed `project get`, made `project
+edit`'s body echo consistent with it, fixed `versions list`'s table, and
+added `whoami`'s `role`; every other human-mode formatter (`versions
+latest`, `publish`, `servers list`/`get`, `formatUpstream`) was audited and
+is recorded below as cleared, with a reason, or reported and deliberately
+left untouched. `--json` is byte-for-byte unchanged everywhere.
+
+### Fixed
+
+- `rinth project get`'s human output (`formatProject`,
+  `src/commands/project.ts`) no longer omits `description`/`body` with no
+  hint a fuller view exists — the confirmed defect (RINTH-20). `description`
+  (Modrinth's short one-line summary) now prints in full, `"none"` when
+  empty. `body` (long-form markdown, unbounded length) is never dumped: it
+  prints an honest character count plus `(use --json to read the full
+  text)`, `"0 chars"` when empty — never a silent truncation. Also added,
+  audited against the full `Labrinth.Projects.v2.Project` type (43 fields;
+  see PR body for the complete per-field accounting): `moderator_message`
+  and `requested_status` (shown only when present — the "why was my project
+  rejected" decision `project submit` makes reachable from this CLI),
+  `license.url` and `additional_categories` (same family as `license.id`/
+  `categories`, already shown), and `wiki_url`/`discord_url`/
+  `donation_urls`/`icon_url` (same "external link" family as `source_url`/
+  `issues_url`, already shown). Deliberately still not shown, as noise no
+  decision reachable through this CLI turns on it: `downloads`/`followers`,
+  `team`/`organization`/`thread_id`/`actualProjectType`/`raw_icon_url`/
+  `color`/`monetization_status`, `published`/`updated`/`approved`/`queued`,
+  and `gallery` (a structured multi-image list better served by `--json`).
+  `game_versions`/`loaders`/`versions` (the id list) are cleared for a
+  different reason: `rinth versions list` already covers them, at finer
+  per-version granularity than this project-level aggregate would give.
+- `rinth project edit`'s human output (`formatEditResult`,
+  `src/commands/project.ts`): a patched `body` (e.g. via `--body-file`) used
+  to echo back the FULL read-back markdown, so `rinth project edit ...
+  --body-file README.md` dumped an entire file to the terminal — the
+  inverse of `project get`'s defect, and inconsistent with it. `body` now
+  gets the identical length-pointer treatment `project get` gives it; every
+  other patched field is unchanged (short enough to print in full).
+- `rinth versions list`'s human table (`formatTable`, `src/commands/
+  versions.ts`): the "primary file" column named exactly one file with no
+  hint a version could carry others — renamed `files`, now appends `(+N
+  more)` when it does. `changelog` (prose, same family as `project.body`)
+  was dropped from the table entirely with no hint it existed — now an
+  honest character count column, never the raw text. `dependencies` was
+  dropped too — now a count column.
+
+### Added
+
+- `rinth whoami`'s human output gained `[<role>]` — `testuser (id)
+  [developer]` — the field that actually answers what a reader runs
+  `whoami` to check ("is this the identity/token I think it is") in a way
+  `username`/`id` alone can't. Nothing else on the user object was added:
+  `email` is PII the reader didn't ask for, and `payout_data`/`has_totp`/
+  `has_password` are secret-adjacent; neither belongs on stdout regardless
+  of whether it would help this decision.
+
+### Documentation
+
+- README: updated the `project get`/`project edit` "Human output" example
+  blocks (both were now byte-for-byte wrong the moment `formatProject`/
+  `formatEditResult` changed), the `versions list` table example, and added
+  a "Human output" example to `rinth whoami` (previously undocumented).
+- Audited and recorded, in the PR body and this repo's `RINTH-22`
+  Confluence doc, every other human-mode formatter/inline print this ticket
+  was asked to check: `versions latest` and `publish` (cleared — both print
+  a terse id/confirmation pair, not a report that could be mistaken for
+  complete; full detail is one `versions list`/`--json` away), `servers
+  list`/`servers get` (cleared — `servers get` prints every field of its
+  own deliberate `ServerDetail` credential allowlist; `servers list`'s
+  per-row summary is a terse index, not a report, with `servers get <id>`
+  one command away for the rest; the allowlist itself is intentionally not
+  widened), and `formatUpstream`/`servers upstream` (out of scope per this
+  ticket's own refusal — reported in words on RINTH-22 and left untouched;
+  routed up to RINTH-17 for the owning epic).
+
 ## [0.9.1] - 2026-08-30
 
 Docs-only patch. `v0.9.0` is functionally correct — `versions
