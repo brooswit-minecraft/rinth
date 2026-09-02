@@ -349,9 +349,21 @@ async function exec(args: string[], ctx: CommandContext): Promise<number> {
   });
 }
 
+/** `args[0]` is the subcommand being asked about (e.g. from `rinth servers <sub> --help`); anything else, or none, falls back to the group-level usage. */
+function usageFor(args: string[]): string {
+  const [sub] = args;
+  if (sub === "get") return GET_USAGE;
+  if (sub === "power") return POWER_USAGE;
+  if (sub === "upstream") return UPSTREAM_USAGE;
+  if (sub === "exec") return EXEC_USAGE;
+  return TOP_USAGE;
+}
+
 export const serversCommand: Command = {
   name: "servers",
   describe: "Manage Modrinth-hosted servers",
+
+  usage: usageFor,
 
   async run(args, ctx) {
     const [sub, ...rest] = args;

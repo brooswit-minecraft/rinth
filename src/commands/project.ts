@@ -810,9 +810,21 @@ async function submit(args: string[], ctx: CommandContext): Promise<number> {
 
   return ExitCode.Ok;
 }
+/** `args[0]` is the subcommand being asked about (e.g. from `rinth project <sub> --help`); `get` has no usage string of its own, so it falls back to the group-level USAGE like anything unrecognized. */
+function usageFor(args: string[]): string {
+  const [sub] = args;
+  if (sub === "create") return CREATE_USAGE;
+  if (sub === "submit") return SUBMIT_USAGE;
+  if (sub === "edit") return EDIT_USAGE;
+  if (sub === "icon") return ICON_USAGE;
+  return USAGE;
+}
+
 export const projectCommand: Command = {
   name: "project",
   describe: "Inspect, create, submit, and edit a Modrinth project, and upload its icon",
+
+  usage: usageFor,
 
   async run(args, ctx) {
     const [sub, ...rest] = args;
