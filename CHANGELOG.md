@@ -9,6 +9,55 @@ enforces that this file has a `## [<version>]` heading matching the
 
 ## [Unreleased]
 
+This docs-and-messages change touches no API, flag, route, reason-string,
+or exit code. `servers upstream`'s diagnosis messages
+(`servers_upstream_route_dead`, `servers_credential_refused`) and this
+README's account of the same topic previously stated more than the
+evidence supports on two separate points: that a v1 content-API migration
+was the understood, merely-pending remedy; and that a browser session
+token is the credential Archon requires. Neither was established: the
+world-id blocker the migration was previously cut on is disproven
+end-to-end (see below); and what credential (if any) clears the
+per-server 403 is undecided too — the `servers`/Archon routes live in a
+separate service whose backend source is not published in
+`github.com/modrinth/code`.
+
+The v0 `reinstall` route's 404 being dead at the router — a router-level,
+route-not-found condition, not an auth wall by another name — is,
+separately, a confirmed fact, not an overclaim: rinth's own CI
+`integration` job (run `33203716833`) shows a nonexistent server id
+getting 403, not 404, and an invalid token on the sibling `list` route
+getting 401, not 404, so the per-server auth/ownership wall is live and
+fires before existence is even evaluated, and `reinstall` never reaches
+it. Whether the route was removed or simply never mounted is not settled
+by this and stays open.
+
+A later measurement narrows the world-id blocker further: `GET
+/v1/servers` accepts a labrinth PAT — [attributed-live-run: rinth CI run
+`33676566812`, a probe added for a different, unrelated change, not this
+one] — with the invalid-token control discriminating (401 vs 200), so
+this is a credential fact, not a router artefact. World ids are
+obtainable from CI today, and the world-id blocker is disproven
+end-to-end, not merely on the route side. What remains genuinely open is
+narrower now: whether the v1 **content** route — the one that would
+actually perform a re-point — accepts a PAT; nobody has called it, and
+doing so has not been authorized.
+
+This release rewrites both the messages and the README to state the
+settled facts plainly (this is an upstream limitation, it is not the
+caller's misconfiguration, and no token change fixes it), label what
+remains genuinely open (the v1 content route's PAT-reachability, and
+what credential — if any — clears the per-server 403), and record the one
+experiment that would settle the former — without asserting either that
+the capability is permanently unreachable or that it will work once
+migrated. `servers upstream` is not removed, deprecated, or marked
+unsupported, and no reason string or exit code changed.
+
+Two products consume `rinth` pinned to tags, so a docs-and-message change
+like this only reaches them through a release; `v0.9.1` was itself a
+docs-only patch, and this repo's own convention already supports patching
+for exactly this reason.
+
 RINTH-12 (PR #27): `--help`/`-h` used to print the same two generic
 top-level lines everywhere; `rinth help` and `rinth --version` didn't
 exist. This section did not record it when it shipped, because there was

@@ -73,7 +73,7 @@ describe("diagnoseNotFound", () => {
 describe("diagnoseUpstreamRouteDead", () => {
   const ENDPOINT = "POST /modrinth/v0/servers/srv_123/reinstall";
 
-  test("rewrites a 404 CliError's message to name the dead v0 reinstall route and the rinth-side remedy", () => {
+  test("rewrites a 404 CliError's message to name the dead v0 reinstall route without claiming a known remedy", () => {
     const original = new CliError("Not Found", ExitCode.NotFound, { status: 404, endpoint: ENDPOINT });
 
     const diagnosed = diagnoseUpstreamRouteDead(original);
@@ -81,7 +81,8 @@ describe("diagnoseUpstreamRouteDead", () => {
     expect(diagnosed.message).toContain("reinstall");
     expect(diagnosed.message).toContain("dead at the router");
     expect(diagnosed.message).toContain("independent of credentials");
-    expect(diagnosed.message).toContain("rinth-side migration");
+    expect(diagnosed.message).toContain("undecided");
+    expect(diagnosed.message).not.toContain("migration to the v1 content API, not yet done");
     expect(diagnosed.message).not.toMatch(/^Not Found$/);
   });
 
@@ -126,7 +127,7 @@ describe("diagnoseUpstreamRouteDead", () => {
 describe("diagnoseServerCredentialRefused", () => {
   const ENDPOINT = "GET /modrinth/v0/servers/srv_123";
 
-  test("rewrites a 403 CliError's message to name the server and the PAT identity wall", () => {
+  test("rewrites a 403 CliError's message to name the server and state this is an upstream limitation, not a required-credential claim", () => {
     const original = new CliError("Forbidden", ExitCode.AuthMissing, { status: 403, endpoint: ENDPOINT });
 
     const diagnosed = diagnoseServerCredentialRefused(original, "srv_123");
@@ -134,7 +135,9 @@ describe("diagnoseServerCredentialRefused", () => {
     expect(diagnosed.message).toContain("srv_123");
     expect(diagnosed.message).toContain("403");
     expect(diagnosed.message).toContain("PAT");
-    expect(diagnosed.message).toContain("identity wall");
+    expect(diagnosed.message).toContain("upstream limitation");
+    expect(diagnosed.message).toContain("undecided");
+    expect(diagnosed.message).not.toContain("session token");
     expect(diagnosed.message).not.toMatch(/^Forbidden$/);
   });
 

@@ -55,14 +55,17 @@ export function diagnoseNotFound(error: CliError, subject: string): CliError {
 //     specific call is proven router-level, not credential- or
 //     resource-dependent: a deliberately invalid token got the exact same
 //     404 (see README "Authentication — what a token can and cannot do").
+//     Whether the route was removed or simply never mounted is not
+//     settled by that evidence and this helper does not try to say.
 //   - Every per-server Archon endpoint this CLI calls (`servers get`,
 //     `power`, `exec`'s WebSocket auth, and `upstream`'s read-back) rejects
 //     a PAT with 403. Confirmed from labrinth's published PAT scope enum
 //     (`apps/labrinth/src/models/v3/pats.rs`): there is no SERVER/ARCHON/
 //     PYRO scope at all, so no PAT — regardless of its owner or scopes —
-//     can ever satisfy this check. A 403 from one of these endpoints is
-//     therefore always the identity wall, never an ownership/permissions
-//     question a different credential of the same kind could fix.
+//     can ever satisfy this check by acquiring a missing scope. That makes
+//     a 403 here an upstream limitation, not a caller misconfiguration —
+//     but what Archon's own check actually keys on is undecided: its
+//     backend source is not public (see README "Known gaps / follow-ups").
 //
 // Neither call site can produce the other's status, so — unlike the
 // draft-vs-nonexistent 404 above — there is no genuinely ambiguous case to
@@ -81,9 +84,10 @@ export const SERVER_CREDENTIAL_REFUSED_REASON = "servers_credential_refused";
 /**
  * Rewrites a 404 from `servers upstream`'s `setUpstream` call (the v0
  * `reinstall` route) into a message naming the dead route explicitly and
- * pointing at the rinth-side remedy, instead of a bare API string. Preserves
- * `exitCode`/`status`/`endpoint` exactly, same contract as `diagnoseNotFound`.
- * Any error that isn't a 404 passes through unchanged.
+ * pointing at where its resolution is tracked, instead of a bare API
+ * string. Preserves `exitCode`/`status`/`endpoint` exactly, same contract
+ * as `diagnoseNotFound`. Any error that isn't a 404 passes through
+ * unchanged.
  */
 export function diagnoseUpstreamRouteDead(error: CliError): CliError {
   if (error.status !== 404) {
@@ -94,8 +98,8 @@ export function diagnoseUpstreamRouteDead(error: CliError): CliError {
     "servers upstream failed: HTTP 404 from the v0 `POST /modrinth/v0/servers/{id}/reinstall` route. " +
     "This route is dead at the router, independent of credentials, server, or project — a deliberately " +
     "invalid token gets this exact same 404 (see README \"Authentication — what a token can and cannot " +
-    "do\"). There is nothing to change on your end: the remedy is a rinth-side migration to the v1 " +
-    "content API, not yet done (see README \"Known gaps / follow-ups\").";
+    "do\"). There is nothing to change on your end: this is a known upstream condition whose resolution " +
+    "is undecided — see README \"Known gaps / follow-ups\" for the current state of knowledge.";
 
   return new CliError(message, error.exitCode, {
     status: error.status,
@@ -106,7 +110,8 @@ export function diagnoseUpstreamRouteDead(error: CliError): CliError {
 
 /**
  * Rewrites a 403 from a per-server Archon endpoint into a message naming the
- * server and the identity wall, instead of a bare API string. Preserves
+ * server and stating this is an upstream limitation, not a caller
+ * misconfiguration, instead of a bare API string. Preserves
  * `exitCode`/`status`/`endpoint` exactly, same contract as `diagnoseNotFound`.
  * Any error that isn't a 403 passes through unchanged.
  */
@@ -116,10 +121,11 @@ export function diagnoseServerCredentialRefused(error: CliError, serverId: strin
   }
 
   const message =
-    `Server ${serverId} refused this credential (HTTP 403). A labrinth PAT cannot carry per-server ` +
-    "Archon access — this is an identity wall, not a missing PAT scope (there is no SERVER/ARCHON/PYRO " +
-    "scope at all). Only a browser session token works here, and there is no way to obtain one in CI. " +
-    "See README \"Authentication — what a token can and cannot do\".";
+    `Server ${serverId} refused this credential (HTTP 403). This is an upstream limitation, not a ` +
+    "misconfiguration on your end — labrinth's PAT scope enum has no SERVER/ARCHON/PYRO scope at all, " +
+    "so no PAT can satisfy this check by acquiring a missing scope. What credential (if any) can is " +
+    "undecided: Archon's backend is not public, so we do not know what clears it. See README " +
+    "\"Authentication — what a token can and cannot do\".";
 
   return new CliError(message, error.exitCode, {
     status: error.status,

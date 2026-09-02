@@ -6,7 +6,7 @@ import { printHuman, printJson } from "../output.ts";
 import { registerSecret } from "../redact.ts";
 import type { Command, CommandContext } from "./types.ts";
 
-/** Runs `getServer`, rewriting a 403 (per-server Archon identity wall) via `diagnoseServerCredentialRefused`. */
+/** Runs `getServer`, rewriting a 403 (per-server Archon credential refusal) via `diagnoseServerCredentialRefused`. */
 async function getServerDiagnosed(id: string, ctx: CommandContext): Promise<ServerDetail> {
   try {
     return await ctx.transport.getServer(id);
@@ -18,7 +18,7 @@ async function getServerDiagnosed(id: string, ctx: CommandContext): Promise<Serv
   }
 }
 
-/** Runs `power`, rewriting a 403 (per-server Archon identity wall) via `diagnoseServerCredentialRefused`. */
+/** Runs `power`, rewriting a 403 (per-server Archon credential refusal) via `diagnoseServerCredentialRefused`. */
 async function powerDiagnosed(id: string, action: PowerAction, ctx: CommandContext): Promise<void> {
   try {
     await ctx.transport.power(id, action);
