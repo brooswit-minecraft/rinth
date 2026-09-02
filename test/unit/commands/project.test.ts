@@ -178,6 +178,206 @@ describe("rinth project get", () => {
     expect(printed).toContain("https://github.com/example/my-draft-mod/issues");
   });
 
+  test("human mode prints the description in full — it's the short summary field, not the long-form body", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const transport = createFakeTransport({
+      project: fixtureProject({ description: "A mod that hasn't been approved yet" }),
+    });
+
+    const code = await run(["project", "get", "my-draft-mod"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).toContain("description:");
+    expect(printed).toContain("A mod that hasn't been approved yet");
+  });
+
+  test("human mode prints 'none' for an empty description, not a blank/missing line", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const transport = createFakeTransport({ project: fixtureProject({ description: "" }) });
+
+    const code = await run(["project", "get", "my-draft-mod"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).toMatch(/description:\s+none/);
+  });
+
+  test("human mode never dumps the long-form body — it signals length and points at --json instead (THE CONFIRMED DEFECT — RINTH-20)", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const body = "# Heading\n\nA much longer piece of markdown body text describing the project in full.";
+    const transport = createFakeTransport({ project: fixtureProject({ body }) });
+
+    const code = await run(["project", "get", "my-draft-mod"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).not.toContain(body);
+    expect(printed).toContain("body:");
+    expect(printed).toContain(`${body.length} chars`);
+    expect(printed).toContain("--json");
+  });
+
+  test("human mode reports an empty body honestly as '0 chars' — does not crash on empty/absent body", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const transport = createFakeTransport({ project: fixtureProject({ body: "" }) });
+
+    const code = await run(["project", "get", "my-draft-mod"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).toContain("body:");
+    expect(printed).toContain("0 chars");
+  });
+
+  test("human mode omits the moderator_message line entirely when the project carries none", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const transport = createFakeTransport({ project: fixtureProject() });
+
+    const code = await run(["project", "get", "my-draft-mod"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).not.toContain("moderator_message");
+  });
+
+  test("human mode surfaces moderator_message.message in full on a rejected project — the reason a reader is most likely deciding on", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const transport = createFakeTransport({
+      project: fixtureProject({
+        status: "rejected",
+        moderator_message: { message: "Please fix the license field before resubmitting." },
+      }),
+    });
+
+    const code = await run(["project", "get", "my-draft-mod"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).toContain("moderator_message:");
+    expect(printed).toContain("Please fix the license field before resubmitting.");
+  });
+
+  test("human mode signals length + --json when moderator_message also carries a long-form body", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const details = "A much longer explanation of exactly what needs to change and why.";
+    const transport = createFakeTransport({
+      project: fixtureProject({
+        status: "rejected",
+        moderator_message: { message: "Rejected — see details.", body: details },
+      }),
+    });
+
+    const code = await run(["project", "get", "my-draft-mod"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).not.toContain(details);
+    expect(printed).toContain("Rejected — see details.");
+    expect(printed).toContain(`${details.length} chars`);
+    expect(printed).toContain("--json");
+  });
+
+  test("human mode surfaces requested_status when present (a moderation-queue field the ticket's own reviewer flagged)", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const transport = createFakeTransport({
+      project: fixtureProject({ status: "draft", requested_status: "approved" }),
+    });
+
+    const code = await run(["project", "get", "my-draft-mod"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).toContain("requested_status:");
+    expect(printed).toContain("approved");
+  });
+
+  test("human mode omits requested_status entirely when absent", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const transport = createFakeTransport({ project: fixtureProject() });
+
+    const code = await run(["project", "get", "my-draft-mod"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).not.toContain("requested_status");
+  });
+
+  test("human mode appends license.url onto the license line when present", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const transport = createFakeTransport({
+      project: fixtureProject({ license: { id: "MIT", name: "MIT License", url: "https://opensource.org/licenses/MIT" } }),
+    });
+
+    const code = await run(["project", "get", "my-draft-mod"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).toContain("https://opensource.org/licenses/MIT");
+  });
+
+  test("human mode shows additional_categories (same family as categories), 'none' when empty", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const transport = createFakeTransport({
+      project: fixtureProject({ additional_categories: ["adventure", "magic"] }),
+    });
+
+    const code = await run(["project", "get", "my-draft-mod"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).toContain("additional_categories:");
+    expect(printed).toContain("adventure, magic");
+  });
+
+  test("human mode shows wiki_url/discord_url/donation_urls/icon_url — same 'external link' family already covered for source_url/issues_url", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const transport = createFakeTransport({
+      project: fixtureProject({
+        wiki_url: "https://wiki.example.com",
+        discord_url: "https://discord.gg/example",
+        donation_urls: [{ id: "d1", platform: "Patreon", url: "https://patreon.com/example" }],
+        icon_url: "https://cdn.modrinth.com/icon.png",
+      }),
+    });
+
+    const code = await run(["project", "get", "my-draft-mod"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).toContain("https://wiki.example.com");
+    expect(printed).toContain("https://discord.gg/example");
+    expect(printed).toContain("Patreon (https://patreon.com/example)");
+    expect(printed).toContain("https://cdn.modrinth.com/icon.png");
+  });
+
+  test("human mode prints 'none' for absent wiki_url/discord_url/icon_url and empty donation_urls", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const transport = createFakeTransport({ project: fixtureProject() });
+
+    const code = await run(["project", "get", "my-draft-mod"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).toMatch(/wiki_url:\s+none/);
+    expect(printed).toMatch(/discord_url:\s+none/);
+    expect(printed).toMatch(/donation_urls:\s+none/);
+    expect(printed).toMatch(/icon_url:\s+none/);
+  });
+
   test("human mode prints 'none' for empty categories and absent source_url/issues_url", async () => {
     const logSpy = spyOn(console, "log").mockImplementation(() => {});
     const transport = createFakeTransport({
@@ -189,9 +389,9 @@ describe("rinth project get", () => {
     logSpy.mockRestore();
 
     expect(code).toBe(ExitCode.Ok);
-    expect(printed).toContain("categories:    none");
-    expect(printed).toContain("source_url:    none");
-    expect(printed).toContain("issues_url:    none");
+    expect(printed).toMatch(/\n {2}categories:\s+none\n/);
+    expect(printed).toMatch(/source_url:\s+none/);
+    expect(printed).toMatch(/issues_url:\s+none/);
   });
 
   test("a 404 is diagnosed rather than surfaced bare: names the candidate causes and points at `rinth whoami`", async () => {
@@ -591,6 +791,35 @@ describe("rinth project edit", () => {
     expect(printed).toContain("description:");
     expect(printed).toContain("New desc");
     expect(printed).not.toContain("client_side:");
+  });
+
+  test("human mode never dumps an edited body's full markdown — same length-pointer treatment as `project get` (RINTH-22 item 2)", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const body = "# From a file\n\nA whole markdown README's worth of long-form text.";
+    const transport = createFakeTransport({ project: fixtureProject({ body }) });
+
+    const code = await run(["project", "edit", "my-draft-mod", "--body", body], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).not.toContain(body);
+    expect(printed).toContain("body:");
+    expect(printed).toContain(`${body.length} chars`);
+    expect(printed).toContain("--json");
+  });
+
+  test("human mode reports an edited empty body honestly as '0 chars'", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const transport = createFakeTransport({ project: fixtureProject({ body: "" }) });
+
+    const code = await run(["project", "edit", "my-draft-mod", "--body", ""], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).toContain("body:");
+    expect(printed).toContain("0 chars");
   });
 
   test("the read-back showing a field did NOT change is a FAILURE: exit 5 (ApiError), message names it", async () => {

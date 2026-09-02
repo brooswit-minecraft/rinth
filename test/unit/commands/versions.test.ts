@@ -246,6 +246,8 @@ describe("rinth versions list", () => {
     expect(printed).toContain("id");
     expect(printed).toContain("version_number");
     expect(printed).toContain("channel");
+    expect(printed).toContain("changelog");
+    expect(printed).toContain("dependencies");
     expect(printed).toContain("v1");
     expect(printed).toContain("1.0.0");
     expect(printed).toContain("release");
@@ -253,6 +255,52 @@ describe("rinth versions list", () => {
     expect(printed).toContain("1.20.4");
     expect(printed).toContain("2026-01-01T00:00:00Z");
     expect(printed).toContain("f.jar");
+    // fixtureVersion() defaults to an empty changelog and no dependencies —
+    // the RINTH-22 empty/absent case for this formatter's own prose field.
+    expect(printed).toContain("0 chars");
+  });
+
+  test("changelog shows an honest char count (never dumps the prose itself, same family as project.body) and dependencies shows a count", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const changelog = "- Fixed a crash on startup.\n- Improved performance.";
+    const transport = createFakeTransport({
+      versions: [
+        fixtureVersion({
+          changelog,
+          dependencies: [{ project_id: "p1", dependency_type: "required" }, { version_id: "v9", dependency_type: "optional" }],
+        }),
+      ],
+    });
+
+    const code = await run(["versions", "list", "sodium"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).not.toContain(changelog);
+    expect(printed).toContain(`${changelog.length} chars`);
+    expect(printed).toContain("2");
+  });
+
+  test("the files column names the primary file and, when more than one file exists, how many more — not just one name with no hint of the rest", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const multiFile = fixtureVersion({
+      files: [
+        { hashes: { sha1: "a", sha512: "b" }, url: "u1", filename: "primary.jar", primary: true, size: 1 },
+        { hashes: { sha1: "c", sha512: "d" }, url: "u2", filename: "sources.jar", primary: false, size: 1 },
+        { hashes: { sha1: "e", sha512: "f" }, url: "u3", filename: "javadoc.jar", primary: false, size: 1 },
+      ],
+    });
+    const transport = createFakeTransport({ versions: [multiFile] });
+
+    const code = await run(["versions", "list", "sodium"], { transport });
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(printed).toContain("primary.jar (+2 more)");
+    expect(printed).not.toContain("sources.jar");
+    expect(printed).not.toContain("javadoc.jar");
   });
 
   test("falls back to the first file when none is primary, and to '-' when there are no files", async () => {
