@@ -9,6 +9,50 @@ enforces that this file has a `## [<version>]` heading matching the
 
 ## [Unreleased]
 
+RINTH-12 (PR #27): `--help`/`-h` used to print the same two generic
+top-level lines everywhere; `rinth help` and `rinth --version` didn't
+exist. This section did not record it when it shipped, because there was
+no `[Unreleased]` section yet — RINTH-20 (below) created it afterward. That
+made RINTH-12's shipped work equally unreleased but undocumented here, so
+it's recorded now rather than left permanently missing from the record.
+
+### Added
+
+- `--help`/`-h` now routes to usage text specific to what preceded it on
+  the command line — top-level, command group, and (where a group's own
+  usage is already split per subcommand, e.g. `project`, `servers`) the
+  subcommand; where no per-subcommand split exists, help falls back to the
+  group-level usage. `rinth help [<command> [<subcommand>]]` is the same
+  routing spelled as a command instead of a flag.
+- `rinth --version` prints `package.json`'s version. Recognized only
+  *before* the command token, so it doesn't collide with `servers
+  upstream`'s/`publish`'s own `--version <id>` flags.
+- Top-level help is generated from the `commands` registry rather than
+  hand-copied, so a future registry addition can't silently go missing
+  from it.
+- All help/version paths exit `0`, need no `MODRINTH_TOKEN`, and build no
+  transport. Unknown top-level command and invalid subcommand are
+  unchanged: still exit `2`.
+
+RINTH-30: `rinth project icon`'s accepted-extension list used to include
+three extensions (`svg`, `svgz`, `rgb`) that labrinth's server does not
+accept, carried over from a docs-sourced reading rather than the server's
+own source. A caller passing one of those got past `rinth`'s own local
+usage check, spent the upload, and only then failed against the live API.
+
+### Changed
+
+- `ICON_CONTENT_TYPES` (`src/client/index.ts`) is narrowed to the six
+  extensions labrinth's server source (`get_image_content_type()` in
+  `apps/labrinth/src/util/ext.rs`) actually accepts: `bmp`, `gif`, `jpeg`,
+  `jpg`, `png`, `webp`. **This is a behaviour change, not a bugfix in the
+  exit-code sense**: a caller passing `.svg`/`.svgz`/`.rgb` now gets a
+  local usage error (**exit 2**) before any bytes are sent, instead of a
+  remote API failure (a different exit code, at a later moment) after the
+  bytes were already uploaded. Strictly better for the caller, but the
+  shape of the failure — where and when it happens — is different, not
+  merely fixed.
+
 RINTH-20/RINTH-22: human-format output used to be able to LOOK complete while
 structurally omitting the fields a reader most needed — confirmed in
 `project get`, whose human summary had no way to show `description`/`body`
