@@ -16,11 +16,11 @@ README's account of the same topic previously stated more than the
 evidence supports on two separate points: that a v1 content-API migration
 was the understood, merely-pending remedy; and that a browser session
 token is the credential Archon requires. Neither was established: the
-world-id blocker the migration was previously cut on is disproven on the
-route side, but that route's own PAT-reachability is undecided; and what
-credential (if any) clears the per-server 403 is undecided too — the
-`servers`/Archon routes live in a separate service whose backend source
-is not published in `github.com/modrinth/code`.
+world-id blocker the migration was previously cut on is disproven
+end-to-end (see below); and what credential (if any) clears the
+per-server 403 is undecided too — the `servers`/Archon routes live in a
+separate service whose backend source is not published in
+`github.com/modrinth/code`.
 
 The v0 `reinstall` route's 404 being dead at the router — a router-level,
 route-not-found condition, not an auth wall by another name — is,
@@ -32,11 +32,22 @@ fires before existence is even evaluated, and `reinstall` never reaches
 it. Whether the route was removed or simply never mounted is not settled
 by this and stays open.
 
+A later measurement narrows the world-id blocker further: `GET
+/v1/servers` accepts a labrinth PAT — [attributed-live-run: rinth CI run
+`33676566812`, a probe added for a different, unrelated change, not this
+one] — with the invalid-token control discriminating (401 vs 200), so
+this is a credential fact, not a router artefact. World ids are
+obtainable from CI today, and the world-id blocker is disproven
+end-to-end, not merely on the route side. What remains genuinely open is
+narrower now: whether the v1 **content** route — the one that would
+actually perform a re-point — accepts a PAT; nobody has called it, and
+doing so has not been authorized.
+
 This release rewrites both the messages and the README to state the
 settled facts plainly (this is an upstream limitation, it is not the
 caller's misconfiguration, and no token change fixes it), label what
-remains genuinely open (the v1 route's PAT-reachability, and what
-credential — if any — clears the per-server 403), and record the one
+remains genuinely open (the v1 content route's PAT-reachability, and
+what credential — if any — clears the per-server 403), and record the one
 experiment that would settle the former — without asserting either that
 the capability is permanently unreachable or that it will work once
 migrated. `servers upstream` is not removed, deprecated, or marked
