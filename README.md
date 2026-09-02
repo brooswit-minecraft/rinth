@@ -797,11 +797,12 @@ My Draft Modpack (AbCdEfGh)
   body:                   145 chars (use --json to read the full text)
 ```
 
-`requested_status` and `moderator_message` are only printed when the project actually carries them (most projects, most of the time, do not) — e.g. a `status: rejected` project shows:
+`requested_status` and `moderator_message` are only printed when the project actually carries them (most projects, most of the time, do not) — e.g. a `status: rejected` project that also has a `requested_status` set shows:
 
 ```
-  status:              rejected
-  moderator_message:   Please fix the license field before resubmitting.
+  status:                 rejected
+  requested_status:       approved
+  moderator_message:      Please fix the license field before resubmitting.
 ```
 
 **`--json`** — the raw project object, unmodified API shape (byte-for-byte unchanged by this ticket):
