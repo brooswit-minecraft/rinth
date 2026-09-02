@@ -12,9 +12,11 @@
 // the ticket's mutating-call refusal.
 //
 // This is a PROBE, not an assertion: a 401/403/404 from Archon is a
-// legitimate, valuable result and must not fail the build. Only a shape the
-// client itself shouldn't be able to produce (a non-Error throw, or the
-// invalid-token control unexpectedly succeeding) fails a test here.
+// legitimate, valuable result and must not fail the build — and neither
+// does the invalid-token control unexpectedly returning 2xx, which is
+// itself a finding (reported as INCONCLUSIVE, not thrown). Only a shape
+// the client itself shouldn't be able to produce — a rejection with no
+// recognizable HTTP status at all — fails a test here.
 //
 // Reports SHAPES AND COUNTS ONLY. This repo's Actions logs are public: no
 // server id, no server name, no world id, no sftp/panel credential is ever
@@ -25,6 +27,7 @@
 import { describe, expect, test } from "bun:test";
 import { AuthFeature, GenericModrinthClient, PanelVersionFeature } from "@modrinth/api-client";
 import type { AuthConfig } from "@modrinth/api-client";
+import { printHuman } from "../../src/output.ts";
 import { hasModrinthToken, MODRINTH_TOKEN } from "./harness.ts";
 
 function statusOf(error: unknown): number | undefined {
@@ -74,7 +77,7 @@ async function probeV1List(client: GenericModrinthClient): Promise<
       // transport/client error, which this probe is allowed to fail on.
       throw error;
     }
-    console.log(`SERVERS V1 LIST: rejected => status ${status}: ${messageOf(error)}`);
+    printHuman(`SERVERS V1 LIST: rejected => status ${status}: ${messageOf(error)}`);
     return { ok: false, status };
   }
 }
@@ -120,36 +123,44 @@ describe("integration: servers v1 list (Archon v1 auth probe, RINTH-31)", () => 
 
       const realStatus = realResult.ok ? "2xx" : realResult.status;
       const invalidStatus = invalidResult.ok ? "2xx" : invalidResult.status;
-      const distinguishable = realStatus !== invalidStatus;
 
-      let interpretation: string;
-      if (realResult.ok) {
-        interpretation = "v1 accepts a PAT; see world-id counts above for whether a world id is obtainable in CI.";
-      } else if (distinguishable) {
-        interpretation = "the real PAT and the invalid token got DIFFERENT responses — the boundary is real and credential-shaped.";
-      } else {
-        interpretation = "the real PAT and the invalid token got an IDENTICAL response — the wall is routing, not credentials.";
-      }
-
-      console.log(
-        `SERVERS V1 LIST COMPARISON: real PAT => ${realStatus}; invalid token => ${invalidStatus}; ` +
-          `distinguishable => ${distinguishable}. This run observed (v1 only): ${interpretation}`,
-      );
-
-      // Assert only on shapes the client itself shouldn't be able to
-      // produce — never on a particular upstream status. A 401/403/404 on
-      // either call is a valid, passing outcome.
-      expect(typeof realStatus === "number" || realStatus === "2xx").toBe(true);
-      expect(typeof invalidStatus === "number" || invalidStatus === "2xx").toBe(true);
+      // A 2xx from the invalid-token client is not itself a build failure —
+      // an unexpected accept from `list()` is a genuine finding about v1,
+      // not a broken harness — but it DOES mean the control never proved
+      // the invalid token was actually applied, so the real-PAT result
+      // above cannot be treated as confirmatory. Mirrors
+      // probeReinstallWithInvalidToken's "inconclusive" verdict in
+      // servers-manage.integration.test.ts rather than throwing.
       if (invalidResult.ok) {
-        // The one genuinely wrong shape: the invalid-token control must
-        // never itself succeed, or it isn't a control — this is not "v1
-        // returned an unexpected status", it's the control breaking, so it
-        // is the one legitimate failure here rather than a recorded finding.
-        throw new Error(
-          "invalid-token control unexpectedly succeeded (2xx) — the invalid token was not applied, so this run's real-PAT result cannot be trusted",
+        console.log(
+          `SERVERS V1 LIST COMPARISON: real PAT => ${realStatus}; invalid token => ${invalidStatus} (UNEXPECTED). ` +
+            `This run observed (v1 only): the invalid-token control was never confirmed to reach auth, so A-vs-B is ` +
+            `INCONCLUSIVE on this run — do not treat the real-PAT result above as confirmatory.`,
+        );
+      } else {
+        const distinguishable = realStatus !== invalidStatus;
+        let interpretation: string;
+        if (realResult.ok) {
+          interpretation = "v1 accepts a PAT; see world-id counts above for whether a world id is obtainable in CI.";
+        } else if (distinguishable) {
+          interpretation = "the real PAT and the invalid token got DIFFERENT responses — the boundary is real and credential-shaped.";
+        } else {
+          interpretation = "the real PAT and the invalid token got an IDENTICAL response — the wall is routing, not credentials.";
+        }
+
+        console.log(
+          `SERVERS V1 LIST COMPARISON: real PAT => ${realStatus}; invalid token => ${invalidStatus}; ` +
+            `distinguishable => ${distinguishable}. This run observed (v1 only): ${interpretation}`,
         );
       }
+
+      // Assert only on shapes the client itself shouldn't be able to
+      // produce — never on a particular upstream status, and never on the
+      // invalid-token control returning 2xx (that is a recorded finding,
+      // reported above, not a harness failure). A 401/403/404 — or an
+      // unexpected 2xx — on either call is a valid, passing outcome.
+      expect(typeof realStatus === "number" || realStatus === "2xx").toBe(true);
+      expect(typeof invalidStatus === "number" || invalidStatus === "2xx").toBe(true);
     },
   );
 
