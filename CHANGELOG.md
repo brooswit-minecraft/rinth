@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/). CI
 enforces that this file has a `## [<version>]` heading matching the
 `version` field in `package.json` — see README.md.
 
-## [0.9.2] - 2026-09-02
+## [Unreleased]
 
 Docs-and-messages patch: no API, flag, route, reason-string, or exit-code
 change. `servers upstream`'s diagnosis messages
