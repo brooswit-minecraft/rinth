@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/). CI
 enforces that this file has a `## [<version>]` heading matching the
 `version` field in `package.json` — see README.md.
 
+## [Unreleased]
+
+RINTH-20/RINTH-22: human-format output used to be able to LOOK complete while
+structurally omitting the fields a reader most needed — confirmed in
+`project get`, whose human summary had no way to show `description`/`body`
+at all, and no hint that it couldn't. Fixed `project get`, made `project
+edit`'s body echo consistent with it, fixed `versions list`'s table, and
+added `whoami`'s `role`; every other human-mode formatter (`versions
+latest`, `publish`, `servers list`/`get`, `formatUpstream`) was audited and
+is recorded below as cleared, with a reason, or reported and deliberately
+left untouched. `--json` is byte-for-byte unchanged everywhere.
+
+### Fixed
+
+- `rinth project get`'s human output (`formatProject`,
+  `src/commands/project.ts`) no longer omits `description`/`body` with no
+  hint a fuller view exists — the confirmed defect (RINTH-20). `description`
+  (Modrinth's short one-line summary) now prints in full, `"none"` when
+  empty. `body` (long-form markdown, unbounded length) is never dumped: it
+  prints an honest character count plus `(use --json to read the full
+  text)`, `"0 chars"` when empty — never a silent truncation. Also added,
+  audited against the full `Labrinth.Projects.v2.Project` type (43 fields;
+  see PR body for the complete per-field accounting): `moderator_message`
+  and `requested_status` (shown only when present — the "why was my project
+  rejected" decision `project submit` makes reachable from this CLI),
+  `license.url` and `additional_categories` (same family as `license.id`/
+  `categories`, already shown), and `wiki_url`/`discord_url`/
+  `donation_urls`/`icon_url` (same "external link" family as `source_url`/
+  `issues_url`, already shown). Deliberately still not shown, as noise no
+  decision reachable through this CLI turns on it: `downloads`/`followers`,
+  `team`/`organization`/`thread_id`/`actualProjectType`/`raw_icon_url`/
+  `color`/`monetization_status`, `published`/`updated`/`approved`/`queued`,
+  and `gallery` (a structured multi-image list better served by `--json`).
+  `game_versions`/`loaders`/`versions` (the id list) are cleared for a
+  different reason: `rinth versions list` already covers them, at finer
+  per-version granularity than this project-level aggregate would give.
+- `rinth project edit`'s human output (`formatEditResult`,
+  `src/commands/project.ts`): a patched `body` (e.g. via `--body-file`) used
+  to echo back the FULL read-back markdown, so `rinth project edit ...
+  --body-file README.md` dumped an entire file to the terminal — the
+  inverse of `project get`'s defect, and inconsistent with it. `body` now
+  gets the identical length-pointer treatment `project get` gives it; every
+  other patched field is unchanged (short enough to print in full).
+- `rinth versions list`'s human table (`formatTable`, `src/commands/
+  versions.ts`): the "primary file" column named exactly one file with no
+  hint a version could carry others — renamed `files`, now appends `(+N
+  more)` when it does. `changelog` (prose, same family as `project.body`)
+  was dropped from the table entirely with no hint it existed — now an
+  honest character count column, never the raw text. `dependencies` was
+  dropped too — now a count column.
+
+### Added
+
+- `rinth whoami`'s human output gained `[<role>]` — `testuser (id)
+  [developer]` — the field that actually answers what a reader runs
+  `whoami` to check ("is this the identity/token I think it is") in a way
+  `username`/`id` alone can't. Nothing else on the user object was added:
+  `email` is PII the reader didn't ask for, and `payout_data`/`has_totp`/
+  `has_password` are secret-adjacent; neither belongs on stdout regardless
+  of whether it would help this decision.
+
+### Documentation
+
+- README: updated the `project get`/`project edit` "Human output" example
+  blocks (both were now byte-for-byte wrong the moment `formatProject`/
+  `formatEditResult` changed), the `versions list` table example, and added
+  a "Human output" example to `rinth whoami` (previously undocumented).
+- Audited and recorded, in the PR body and this repo's `RINTH-22`
+  Confluence doc, every other human-mode formatter/inline print this ticket
+  was asked to check: `versions latest` and `publish` (cleared — both print
+  a terse id/confirmation pair, not a report that could be mistaken for
+  complete; full detail is one `versions list`/`--json` away), `servers
+  list`/`servers get` (cleared — `servers get` prints every field of its
+  own deliberate `ServerDetail` credential allowlist; `servers list`'s
+  per-row summary is a terse index, not a report, with `servers get <id>`
+  one command away for the rest; the allowlist itself is intentionally not
+  widened), and `formatUpstream`/`servers upstream` (out of scope per this
+  ticket's own refusal — reported in words on RINTH-22 and left untouched;
+  routed up to RINTH-17 for the owning epic).
+
 ## [0.9.1] - 2026-08-30
 
 Docs-only patch. `v0.9.0` is functionally correct — `versions

@@ -549,7 +549,20 @@ forward.
 `GET https://api.modrinth.com/v2/user` (Bearer token). Prints the
 authenticated user.
 
-**JSON shape** — the raw Modrinth user object:
+**Human output** — `<username> (<id>) [<role>]`. **RINTH-22:** `role` was
+added because it's the field that actually answers what a reader runs
+`whoami` to check — "is this the identity/token I think it is" — in a way
+`username`/`id` alone can't (a moderator token behaves differently from a
+developer one). Nothing else on the user object was added: `email` is PII
+the reader didn't ask for, and `payout_data`/`has_totp`/`has_password` are
+secret-adjacent — none of those belong on stdout regardless of whether they
+would help this decision:
+
+```
+testuser (AbCdEfGh) [developer]
+```
+
+**JSON shape** — the raw Modrinth user object (unchanged by this ticket):
 
 ```json
 { "id": "...", "username": "...", "name": "...", "email": "...", "role": "developer", "badges": 0, "created": "..." }
@@ -762,22 +775,36 @@ can't see) is diagnosed rather than surfaced bare.
 rinth project get my-draft-modpack
 ```
 
-**Human output** — a readable summary:
+**Human output** — a readable summary. **RINTH-22:** this used to omit `description` and `body` entirely, with nothing hinting a fuller view existed — the human format could not display the two prose fields that ARE the Modrinth listing as a person reads it. Fixed: `description` (Modrinth's short one-line summary) prints in full; `body` (long-form markdown, can run to thousands of characters) is never dumped — it gets an honest length and a pointer at `--json`, the same treatment `versions list`'s `changelog` column and `project edit`'s read-back now give it. `moderator_message`/`requested_status` (present only on a project moving through moderation — e.g. after `rinth project submit` gets it rejected) and `additional_categories`/`license.url`/`wiki_url`/`discord_url`/`donation_urls`/`icon_url` (the same "external link"/categorization family `source_url`/`issues_url` were already in) are shown for the same reason: nothing else in this CLI's human output surfaces them, and each backs a decision reachable through this CLI's own commands:
 
 ```
 My Draft Modpack (AbCdEfGh)
-  slug:          my-draft-modpack
-  status:        draft
-  project_type:  modpack
-  client_side:   required
-  server_side:   optional
-  categories:    technology, utility
-  license:       MIT (MIT License)
-  source_url:    https://github.com/example/my-draft-modpack
-  issues_url:    none
+  slug:                   my-draft-modpack
+  status:                 draft
+  project_type:           modpack
+  client_side:            required
+  server_side:            optional
+  categories:             technology, utility
+  additional_categories:  none
+  license:                MIT (MIT License)
+  source_url:             https://github.com/example/my-draft-modpack
+  issues_url:             none
+  wiki_url:               none
+  discord_url:            none
+  donation_urls:          none
+  icon_url:               none
+  description:            A modpack that hasn't been approved yet
+  body:                   145 chars (use --json to read the full text)
 ```
 
-**`--json`** — the raw project object, unmodified API shape:
+`requested_status` and `moderator_message` are only printed when the project actually carries them (most projects, most of the time, do not) — e.g. a `status: rejected` project shows:
+
+```
+  status:              rejected
+  moderator_message:   Please fix the license field before resubmitting.
+```
+
+**`--json`** — the raw project object, unmodified API shape (byte-for-byte unchanged by this ticket):
 
 ```json
 { "id": "AbCdEfGh", "slug": "my-draft-modpack", "status": "draft", "...": "..." }
@@ -848,6 +875,16 @@ that changed:
 Updated project My Draft Modpack (AbCdEfGh). Changed fields:
   description:  A better one-liner
   categories:   technology, utility
+```
+
+**RINTH-22:** `--body`/`--body-file` used to read back and print the FULL
+patched markdown — so `rinth project edit ... --body-file README.md` would
+dump an entire file to the terminal. `body` now gets the same length-pointer
+treatment `project get` gives it, never the raw text:
+
+```
+Updated project My Draft Modpack (AbCdEfGh). Changed fields:
+  body:  6104 chars (use --json to read the full text)
 ```
 
 Like every command here, this resolves a **DRAFT** project via the
@@ -1236,11 +1273,18 @@ rinth versions list sodium --loader fabric --game-version 1.20.4 --channel relea
 rinth versions list sodium --version-number 1.2.3
 ```
 
-**Human output** — an aligned table:
+**Human output** — an aligned table. **RINTH-22:** the old table's "primary
+file" column named exactly one file and said nothing about whether a version
+carried others; `changelog` (prose, potentially long) was dropped from the
+table entirely with no hint it existed; `dependencies` was dropped too. Now:
+`files` names the primary file plus, when there's more than one, how many
+more (`sodium-fabric-0.5.8+mc1.20.4.jar (+2 more)`); `changelog` is an honest
+char count, never the raw prose (same family as `project get`'s `body` —
+`--json` has the full text); `dependencies` is a count:
 
 ```
-id        version_number  channel  loaders  game versions  date                       primary file
-4GyXKCLd  mc1.20.4-0.5.8  release  fabric   1.20.4         2024-02-01T20:33:48.832862Z sodium-fabric-0.5.8+mc1.20.4.jar
+id        version_number  channel  loaders  game versions  date                         files                             changelog  dependencies
+4GyXKCLd  mc1.20.4-0.5.8  release  fabric   1.20.4         2024-02-01T20:33:48.832862Z  sodium-fabric-0.5.8+mc1.20.4.jar  69 chars   1
 ```
 
 **`--json`** — the array of version objects, **unmodified API shape** (an

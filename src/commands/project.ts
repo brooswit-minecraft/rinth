@@ -136,19 +136,92 @@ const USAGE =
   "  rinth project icon <idOrSlug> --file <path>";
 
 
+/** RINTH-22: aligns a `label:` to a fixed column — wide enough for `additional_categories:`, the longest label this formatter prints. */
+function field(label: string, value: string): string {
+  return `  ${`${label}:`.padEnd(24)}${value}`;
+}
+
+/**
+ * A char count plus an actionable pointer at `--json` — never the raw text.
+ * Used for every long-form prose field (`body`, `moderator_message.body`)
+ * this formatter cannot print in full without flooding the terminal. See
+ * RINTH-20/RINTH-22: a truncation with no marker is a NEW instance of the
+ * defect this ticket exists to fix, so this never truncates silently —
+ * either the full (short) value, or an honest length + where to find it.
+ */
+function lengthPointer(text: string): string {
+  const chars = text.length;
+  return chars > 0 ? `${chars} chars (use --json to read the full text)` : "0 chars";
+}
+
+/** Formats a moderator's note in full, plus a length pointer for its optional long-form `body` (never dumped, same treatment as the project's own `body`). */
+function formatModeratorMessage(mm: NonNullable<Labrinth.Projects.v2.Project["moderator_message"]>): string {
+  const message = mm.message ?? "";
+  return mm.body ? `${message} (details: ${lengthPointer(mm.body)})` : message;
+}
+
+function formatDonationUrls(links: Labrinth.Projects.v2.DonationLink[] | undefined): string {
+  return links && links.length > 0 ? links.map((l) => `${l.platform} (${l.url})`).join(", ") : "none";
+}
+
+/**
+ * RINTH-22 audit — every field this formatter shows or deliberately omits,
+ * decided by: (a) is it already covered elsewhere in the human output of
+ * this CLI (e.g. `game_versions`/`loaders`/`versions` are covered, at finer
+ * per-version granularity, by `rinth versions list`), and (b) does any
+ * decision reachable through this CLI's own command surface plausibly turn
+ * on it. Shown here: everything from the original 10, plus `description`/
+ * `body` (the confirmed defect), `moderator_message`/`requested_status`
+ * (same "why was my project rejected" decision `project submit` makes
+ * reachable), `license.url` and `additional_categories` (same family as
+ * fields already shown), and `wiki_url`/`discord_url`/`donation_urls`/
+ * `icon_url` (same "external link" family as the `source_url`/`issues_url`
+ * this formatter already printed before this ticket).
+ *
+ * Deliberately still omitted, as noise no CLI-reachable decision turns on:
+ * `downloads`/`followers` (vanity metrics), `team`/`organization`/
+ * `thread_id`/`actualProjectType`/`raw_icon_url`/`color`/
+ * `monetization_status` (internal/cosmetic/unmanaged-by-this-CLI), and
+ * `published`/`updated`/`approved`/`queued` (timestamps). `gallery` is
+ * cleared too: a structured list of images with their own titles/
+ * descriptions, where even a count would tell a reader nothing actionable
+ * that `--json` or the web listing doesn't do far better. See PR body for
+ * the full accounting against every field on the type.
+ */
 function formatProject(project: Labrinth.Projects.v2.Project): string {
-  return [
+  const lines = [
     `${project.title} (${project.id})`,
-    `  slug:          ${project.slug}`,
-    `  status:        ${project.status}`,
-    `  project_type:  ${project.project_type}`,
-    `  client_side:   ${project.client_side}`,
-    `  server_side:   ${project.server_side}`,
-    `  categories:    ${project.categories.join(", ") || "none"}`,
-    `  license:       ${project.license.id}${project.license.name ? ` (${project.license.name})` : ""}`,
-    `  source_url:    ${project.source_url ?? "none"}`,
-    `  issues_url:    ${project.issues_url ?? "none"}`,
-  ].join("\n");
+    field("slug", project.slug),
+    field("status", project.status),
+  ];
+  if (project.requested_status) {
+    lines.push(field("requested_status", project.requested_status));
+  }
+  if (project.moderator_message) {
+    lines.push(field("moderator_message", formatModeratorMessage(project.moderator_message)));
+  }
+  lines.push(
+    field("project_type", project.project_type),
+    field("client_side", project.client_side),
+    field("server_side", project.server_side),
+    field("categories", project.categories.join(", ") || "none"),
+    field("additional_categories", project.additional_categories.join(", ") || "none"),
+    field(
+      "license",
+      `${project.license.id}${project.license.name ? ` (${project.license.name})` : ""}${project.license.url ? ` — ${project.license.url}` : ""}`,
+    ),
+    field("source_url", project.source_url ?? "none"),
+    field("issues_url", project.issues_url ?? "none"),
+    field("wiki_url", project.wiki_url ?? "none"),
+    field("discord_url", project.discord_url ?? "none"),
+    field("donation_urls", formatDonationUrls(project.donation_urls)),
+    field("icon_url", project.icon_url ?? "none"),
+    // description is Modrinth's short one-line summary — safe to print in
+    // full. body is long-form markdown — never dumped; see lengthPointer.
+    field("description", (project.description ?? "") || "none"),
+    field("body", lengthPointer(project.body ?? "")),
+  );
+  return lines.join("\n");
 }
 
 async function get(args: string[], ctx: CommandContext): Promise<number> {
@@ -394,10 +467,20 @@ function staleFields(patch: Record<string, unknown>, project: Labrinth.Projects.
   return stale;
 }
 
+/**
+ * RINTH-22: `body` gets the same treatment `formatProject` gives it — a
+ * length pointer at `--json`, never the raw markdown — so `rinth project
+ * edit --body-file README.md` doesn't dump an entire file to the terminal.
+ * Every other patched key is short enough to print in full, same as before.
+ */
 function formatEditResult(patch: Record<string, unknown>, project: Labrinth.Projects.v2.Project): string {
   const lines = [`Updated project ${project.title} (${project.id}). Changed fields:`];
   for (const key of Object.keys(patch)) {
     const value = readBackValue(project, key);
+    if (key === "body") {
+      lines.push(`  body:  ${lengthPointer(typeof value === "string" ? value : "")}`);
+      continue;
+    }
     const display = Array.isArray(value) ? value.join(", ") || "none" : String(value ?? "none");
     lines.push(`  ${key}:  ${display}`);
   }
