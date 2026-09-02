@@ -52,17 +52,20 @@ export function diagnoseNotFound(error: CliError, subject: string): CliError {
 //
 //   - `servers upstream`'s reinstall call always hits the v0
 //     `POST /modrinth/v0/servers/{id}/reinstall` route. A 404 from THIS
-//     specific call is proven router-level, not credential- or
-//     resource-dependent: a deliberately invalid token got the exact same
-//     404 (see README "Authentication — what a token can and cannot do").
+//     specific call is proven credential-independent, not resource-
+//     dependent: a deliberately invalid token got the exact same 404 (see
+//     README "Authentication — what a token can and cannot do"). What
+//     inside Archon actually produces the 404 is not visible from outside
+//     Modrinth — do not assert a mechanism (router, removed, unmounted).
 //   - Every per-server Archon endpoint this CLI calls (`servers get`,
 //     `power`, `exec`'s WebSocket auth, and `upstream`'s read-back) rejects
 //     a PAT with 403. Confirmed from labrinth's published PAT scope enum
 //     (`apps/labrinth/src/models/v3/pats.rs`): there is no SERVER/ARCHON/
 //     PYRO scope at all, so no PAT — regardless of its owner or scopes —
-//     can ever satisfy this check. A 403 from one of these endpoints is
-//     therefore always the identity wall, never an ownership/permissions
-//     question a different credential of the same kind could fix.
+//     can ever satisfy this check by acquiring a missing scope. That makes
+//     a 403 here an upstream limitation, not a caller misconfiguration —
+//     but what Archon's own check actually keys on is undecided: its
+//     backend source is not public (see README "Known gaps / follow-ups").
 //
 // Neither call site can produce the other's status, so — unlike the
 // draft-vs-nonexistent 404 above — there is no genuinely ambiguous case to
@@ -72,7 +75,14 @@ export function diagnoseNotFound(error: CliError, subject: string): CliError {
 // reason diagnoseNotFound does: a wrong guess here would be worse than no
 // diagnosis at all.
 
-/** The `reason` for a 404 from `servers upstream`'s dead v0 reinstall route. */
+/**
+ * The `reason` for a 404 from `servers upstream`'s reinstall call. Keeps
+ * the word "dead" even though the prose above and every message below
+ * deliberately avoids it (see the comment block above): this is a
+ * machine contract a fail-closed CI consumer branches on by exact
+ * string, not a claim about why the 404 happens. Do not "helpfully"
+ * rename it to match the prose.
+ */
 export const UPSTREAM_ROUTE_DEAD_REASON = "servers_upstream_route_dead";
 
 /** The `reason` for a 403 from a per-server Archon endpoint. */
@@ -80,10 +90,11 @@ export const SERVER_CREDENTIAL_REFUSED_REASON = "servers_credential_refused";
 
 /**
  * Rewrites a 404 from `servers upstream`'s `setUpstream` call (the v0
- * `reinstall` route) into a message naming the dead route explicitly and
- * pointing at the rinth-side remedy, instead of a bare API string. Preserves
- * `exitCode`/`status`/`endpoint` exactly, same contract as `diagnoseNotFound`.
- * Any error that isn't a 404 passes through unchanged.
+ * `reinstall` route) into a message naming the failing route explicitly
+ * and pointing at where its resolution is tracked, instead of a bare API
+ * string. Preserves `exitCode`/`status`/`endpoint` exactly, same contract
+ * as `diagnoseNotFound`. Any error that isn't a 404 passes through
+ * unchanged.
  */
 export function diagnoseUpstreamRouteDead(error: CliError): CliError {
   if (error.status !== 404) {
@@ -92,10 +103,11 @@ export function diagnoseUpstreamRouteDead(error: CliError): CliError {
 
   const message =
     "servers upstream failed: HTTP 404 from the v0 `POST /modrinth/v0/servers/{id}/reinstall` route. " +
-    "This route is dead at the router, independent of credentials, server, or project — a deliberately " +
-    "invalid token gets this exact same 404 (see README \"Authentication — what a token can and cannot " +
-    "do\"). There is nothing to change on your end: the remedy is a rinth-side migration to the v1 " +
-    "content API, not yet done (see README \"Known gaps / follow-ups\").";
+    "This call returns this exact same 404 regardless of credentials, server, or project — a " +
+    "deliberately invalid token gets it too (see README \"Authentication — what a token can and cannot " +
+    "do\") — and what produces it is not visible from outside Modrinth. There is nothing to change on " +
+    "your end: this is a known upstream condition whose resolution is undecided — see README \"Known " +
+    "gaps / follow-ups\" for the current state of knowledge.";
 
   return new CliError(message, error.exitCode, {
     status: error.status,
@@ -106,7 +118,8 @@ export function diagnoseUpstreamRouteDead(error: CliError): CliError {
 
 /**
  * Rewrites a 403 from a per-server Archon endpoint into a message naming the
- * server and the identity wall, instead of a bare API string. Preserves
+ * server and stating this is an upstream limitation, not a caller
+ * misconfiguration, instead of a bare API string. Preserves
  * `exitCode`/`status`/`endpoint` exactly, same contract as `diagnoseNotFound`.
  * Any error that isn't a 403 passes through unchanged.
  */
@@ -116,10 +129,11 @@ export function diagnoseServerCredentialRefused(error: CliError, serverId: strin
   }
 
   const message =
-    `Server ${serverId} refused this credential (HTTP 403). A labrinth PAT cannot carry per-server ` +
-    "Archon access — this is an identity wall, not a missing PAT scope (there is no SERVER/ARCHON/PYRO " +
-    "scope at all). Only a browser session token works here, and there is no way to obtain one in CI. " +
-    "See README \"Authentication — what a token can and cannot do\".";
+    `Server ${serverId} refused this credential (HTTP 403). This is an upstream limitation, not a ` +
+    "misconfiguration on your end — labrinth's PAT scope enum has no SERVER/ARCHON/PYRO scope at all, " +
+    "so no PAT can satisfy this check by acquiring a missing scope. What credential (if any) can is " +
+    "undecided: Archon's backend is not public, so we do not know what clears it. See README " +
+    "\"Authentication — what a token can and cannot do\".";
 
   return new CliError(message, error.exitCode, {
     status: error.status,

@@ -420,7 +420,7 @@ describe("rinth servers upstream", () => {
   });
 
   describe("RINTH-14: diagnosed failures never reach the user as a bare API string", () => {
-    test("a real 404 from the reinstall route names the dead v0 route and the rinth-side remedy, with a distinct reason under --json", async () => {
+    test("a real 404 from the reinstall route names the failing v0 route without a mechanism or a claimed remedy, with a distinct reason under --json", async () => {
       const errSpy = spyOn(console, "error").mockImplementation(() => {});
       const transport = createFakeTransport({
         setUpstreamError: apiError(ExitCode.NotFound, "Not Found", {
@@ -442,11 +442,12 @@ describe("rinth servers upstream", () => {
 
       expect(printed.error.message).not.toBe("HTTP 404 POST /modrinth/v0/servers/srv_123/reinstall: Not Found");
       expect(printed.error.message).toContain("reinstall");
-      expect(printed.error.message).toContain("dead at the router");
+      expect(printed.error.message).toContain("regardless of credentials");
+      expect(printed.error.message).not.toContain("dead at the router");
       expect(printed.error.reason).toBe("servers_upstream_route_dead");
     });
 
-    test("a real 403 from the per-server Archon read-back names the server and the PAT identity wall, with a distinct reason under --json", async () => {
+    test("a real 403 from the per-server Archon read-back names the server and states an upstream limitation, with a distinct reason under --json", async () => {
       const errSpy = spyOn(console, "error").mockImplementation(() => {});
       const transport = createFakeTransport({
         resolveProjectId: "AABBCCDD",
@@ -469,7 +470,8 @@ describe("rinth servers upstream", () => {
 
       expect(printed.error.message).not.toBe("HTTP 403 GET /modrinth/v0/servers/srv_123: Forbidden");
       expect(printed.error.message).toContain("srv_123");
-      expect(printed.error.message).toContain("identity wall");
+      expect(printed.error.message).toContain("upstream limitation");
+      expect(printed.error.message).not.toContain("session token");
       expect(printed.error.reason).toBe("servers_credential_refused");
     });
 
