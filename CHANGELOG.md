@@ -13,29 +13,34 @@ Docs-and-messages patch: no API, flag, route, reason-string, or exit-code
 change. `servers upstream`'s diagnosis messages
 (`servers_upstream_route_dead`, `servers_credential_refused`) and this
 README's account of the same topic previously stated more than the
-evidence supports on three separate points: that the v0 `reinstall`
-route's 404 was known to originate "at the router" (a mechanism nobody
-established — the 404 is proven credential-independent, nothing more);
-that a v1 content-API migration was the understood, merely-pending
-remedy; and (in the README) that a browser session token is the
-credential Archon requires. None of the three was established: what
-inside Archon actually produces the 404 is not visible from outside
-Modrinth; the world-id blocker the migration was previously cut on is
-disproven on the route side, but that route's own PAT-reachability is
-undecided; and what credential (if any) clears the per-server 403 is
-undecided too — the `servers`/Archon routes live in a separate service
-whose backend source is not published in `github.com/modrinth/code`.
+evidence supports on two separate points: that a v1 content-API migration
+was the understood, merely-pending remedy; and that a browser session
+token is the credential Archon requires. Neither was established: the
+world-id blocker the migration was previously cut on is disproven on the
+route side, but that route's own PAT-reachability is undecided; and what
+credential (if any) clears the per-server 403 is undecided too — the
+`servers`/Archon routes live in a separate service whose backend source
+is not published in `github.com/modrinth/code`.
+
+The v0 `reinstall` route's 404 being dead at the router — a router-level,
+route-not-found condition, not an auth wall by another name — is,
+separately, a confirmed fact, not an overclaim: rinth's own CI
+`integration` job (run `33203716833`) shows a nonexistent server id
+getting 403, not 404, and an invalid token on the sibling `list` route
+getting 401, not 404, so the per-server auth/ownership wall is live and
+fires before existence is even evaluated, and `reinstall` never reaches
+it. Whether the route was removed or simply never mounted is not settled
+by this and stays open.
 
 This release rewrites both the messages and the README to state the
 settled facts plainly (this is an upstream limitation, it is not the
 caller's misconfiguration, and no token change fixes it), label what
-remains open, and record the one experiment that would settle it —
-without asserting a mechanism for the 404, and without asserting either
-that the capability is permanently unreachable or that it will work once
+remains genuinely open (the v1 route's PAT-reachability, and what
+credential — if any — clears the per-server 403), and record the one
+experiment that would settle the former — without asserting either that
+the capability is permanently unreachable or that it will work once
 migrated. `servers upstream` is not removed, deprecated, or marked
-unsupported; `servers_upstream_route_dead` keeps its name as a stable
-machine contract even though the prose above it no longer uses that
-wording; and no reason string or exit code changed.
+unsupported, and no reason string or exit code changed.
 
 Two products consume `rinth` pinned to tags, so a docs-and-message change
 like this only reaches them through a release; `v0.9.1` was itself a

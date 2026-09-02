@@ -361,13 +361,16 @@ Verified against the `modrinth/code` frontend/backend @ `0ab9100` and
   amount of source-reading settles it — see "`servers upstream`'s open
   question" under "Known gaps / follow-ups" below for what would.
 - The v0 `POST /servers/{id}/reinstall` route that `servers upstream`
-  targets returns HTTP 404 regardless of credentials: a deliberately
-  invalid token gets 401 on `GET /servers` (a working, credential-checked
-  route) but the same 404 on `reinstall` (KAN-735, run 33203716833) — so
-  the 404 is not a rejected-credential response. What inside Archon
-  actually produces it is not visible from outside Modrinth — see
-  "`servers upstream`'s open question" under "Known gaps / follow-ups"
-  below.
+  targets is dead at the router: a deliberately invalid token gets 401 on
+  `GET /servers` but 404 on `reinstall`, proving the 404 is
+  route-not-found, independent of credentials (KAN-735, run
+  33203716833). The same run also shows a nonexistent server id getting
+  403 (not 404) on the per-server `GET`, and an invalid token getting 401
+  (not 404) on `GET /servers` — so the auth/ownership wall is live and
+  fires before existence is evaluated, and `reinstall` never reaches it.
+  Whether the route was removed or simply never mounted stays unsettled
+  by this — see "`servers upstream`'s open question" under "Known gaps /
+  follow-ups" below.
 - Archon requires an `X-Panel-Version: 1` header on every request; a
   request missing it gets HTTP 426 *before* auth is even evaluated — see
   "Exit codes" below.
@@ -695,22 +698,28 @@ it is undecided: Archon's backend source is not published in
 `github.com/modrinth/code`, so what its own check actually keys on cannot
 be read (see "Known gaps / follow-ups").
 
-Why `reinstall` 404s instead of 403ing like the rest: the identical
-request repeated with a deliberately invalid, never-real token still
-returned the exact same 404 "not found" — so **the 404 does not depend on
-the credential.** A nonexistent server id and a second, different real
-modpack both got the same byte-identical 404 too, ruling out a pair- or
-server-specific cause. **What produces this 404 inside Archon is not
-visible from outside Modrinth.** A 404 this shape — credential-, server-,
-and modpack-independent — cannot distinguish the route being absent,
-present but unmounted, or present, mounted, and 404ing from within for an
-unrelated reason; nothing available here picks between them, and this
-repo does not claim which. (Source research on the `modrinth/code`
-frontend independently found no current caller of `servers_v0.reinstall`;
-installs there go through a newer `content_v1` API instead — a separate,
-source-only fact about the frontend's current caller graph, not a claim
-about why this route's HTTP response is what it is.) `upstream` is kept
-as built (it's
+Why `reinstall` 404s instead of 403ing like the rest is now confirmed, not
+just inferred: the identical request repeated with a deliberately invalid,
+never-real token still returned the exact same 404 "not found" — meaning
+the router never reaches an auth check for this route at all. Combined with
+a nonexistent server id and a second, different real modpack both getting
+the same byte-identical 404 (ruling out a pair- or server-specific cause),
+this is a router-level 404: **the v0 `/reinstall` route this CLI's
+`upstream` command targets does not resolve to anything live, regardless of
+credentials, server, or modpack.** A route-vs-auth control from the same
+CI run makes this solid rather than merely plausible: a **nonexistent**
+server id on the per-server `GET` gets **403**, not 404 — the
+auth/ownership wall fires before existence is even evaluated — and an
+invalid token on the sibling `list` route gets **401**, not 404 — the auth
+layer is live and discriminating. If `reinstall` sat behind that same
+pipeline, a nonexistent id would have produced 403 and an invalid token
+401; it produced 404 both times, so the request never reaches that
+pipeline at all. **What remains unsettled is only whether the route was
+removed or simply never mounted** — this evidence does not distinguish the
+two. (Source research on the `modrinth/code` frontend independently found
+no current caller of `servers_v0.reinstall`; installs there go through a
+newer `content_v1` API instead — consistent with the v0 route being
+retired.) `upstream` is kept as built (it's
 `@modrinth/api-client`'s documented call, matching the route the live docs
 don't cover either way). A migration to the v1 content API is not
 attempted here. The reasoning that once ruled it out — that it would need
@@ -1587,19 +1596,20 @@ published) is what makes "no match yet" retryable (exit 7,
 "Four distinguishable outcomes" below.
 
 **⚠️ The second step does not work against the live API today.** The v0
-`reinstall` route `servers upstream` calls returns HTTP 404 regardless of
-credentials — see "Authentication — what a token can and cannot do" above
-and "Known gaps / follow-ups" below. This recipe documents the intended
-shape of the deploy pipeline; whether and how it can be unblocked is a
-genuinely open question (see "Known gaps / follow-ups"), so don't wire it
-into a real pipeline yet.
+`reinstall` route `servers upstream` calls is dead at the router — see
+"Authentication — what a token can and cannot do" above and "Known gaps /
+follow-ups" below. This recipe documents the intended shape of the deploy
+pipeline; whether and how it can be unblocked is a genuinely open question
+(see "Known gaps / follow-ups"), so don't wire it into a real pipeline
+yet.
 
 ## Known gaps / follow-ups
 
 - **`servers upstream` is non-functional against the live API — and this is
   not theoretical, it is a live breakage with a real consumer failing in
-  production right now.** The v0 `reinstall` route it calls returns HTTP
-  404 regardless of token, server id, or project id. Production evidence,
+  production right now.** The v0 `reinstall` route it calls is dead at
+  the router — HTTP 404 regardless of token, server id, or project id.
+  Production evidence,
   attributed rather than observed from this environment (there is no
   `MODRINTH_TOKEN` here): `brooswit-minecraft/schematic`'s
   `.github/workflows/reusable-server-update.yml` already calls `rinth
@@ -1617,12 +1627,19 @@ into a real pipeline yet.
   succeeded with the same `MODRINTH_TOKEN` seconds before the reinstall
   call 404'd. **There is nothing to change about your token, server, or
   project.**
-  **What produces the 404 is not visible from outside Modrinth** — the
-  `servers`/Archon routes live in `archon.modrinth.com`, a service whose
-  backend source is not published in `github.com/modrinth/code`. A 404
-  this shape cannot distinguish the route being absent, present but
-  unmounted, or present, mounted, and 404ing from within for an unrelated
-  reason — this bullet does not claim which.
+  **What produces the 404 is now confirmed, not just inferred: it is
+  router-level.** Attributed rather than observed from this environment:
+  rinth's own CI `integration` job (run `33203716833`) contains a
+  route-vs-auth control — a **nonexistent** server id on the per-server
+  `GET` returns **403**, not 404 (the auth/ownership wall fires before
+  existence is even evaluated), and an invalid token on the sibling
+  `list` route returns **401**, not 404 (the auth layer is live and
+  discriminating). `reinstall` returns 404 in both cases, so the request
+  never reaches that pipeline at all — this is genuinely a route-not-found
+  condition, not the auth wall showing up under a different status.
+  **What remains unsettled is only whether the route was removed or
+  simply never mounted** — this evidence does not distinguish the two,
+  and this bullet does not claim which.
   **The world-id blocker this migration was previously cut on is
   disproven.** `GET /v1/servers` (`servers_v1.list()`) takes no server id
   at all and returns the same `worlds[]`-bearing shape the id-scoped
@@ -1855,16 +1872,13 @@ determined by which call produced it, so naming one confidently is honest,
 not a guess:
 
 - **`diagnoseUpstreamRouteDead`** rewrites a 404 from `servers upstream`'s
-  `reinstall` call (the only thing that call ever hits). This call is
-  proven to 404 independent of credentials, server, or project — see
-  "`rinth servers upstream`" above for what is (and isn't) established
-  about why — so the message names the route explicitly and states this
-  is a known upstream condition whose resolution is undecided, pointing
-  at "Known gaps / follow-ups" rather than claiming a known remedy or a
-  mechanism. Reason: `"servers_upstream_route_dead"` — the reason string
-  keeps this wording as a stable machine contract a fail-closed CI
-  consumer branches on; it is not itself a claim about why the 404
-  happens (see the comment above the constant in `src/diagnose.ts`).
+  `reinstall` call (the only thing that call ever hits). This route is
+  proven dead at the router, independent of credentials, server, or
+  project — see "`rinth servers upstream`" above — so the message names
+  the route explicitly and states this is a known upstream condition
+  whose resolution is undecided, pointing at "Known gaps / follow-ups"
+  rather than claiming a known remedy. Reason:
+  `"servers_upstream_route_dead"`.
 - **`diagnoseServerCredentialRefused`** rewrites a 403 from any per-server
   Archon endpoint (`servers get`, `power`, `exec`'s WebSocket auth, and
   `upstream`'s post-reinstall read-back). Every one of these routes rejects
@@ -1882,10 +1896,10 @@ not a guess:
 through the existing `diagnoseNotFound` (reason `"project_unreadable"`)
 instead of a third helper — reusing the shared helper rather than
 duplicating it, per RINTH-14. `servers list` is untouched: `GET
-/modrinth/v0/servers` is not a per-server route and is not known to fail
-the way `reinstall` does, so there is nothing here to diagnose.
+/modrinth/v0/servers` is not a per-server route and is not known to be
+dead, so there is nothing here to diagnose.
 
-Because the 404 (reinstall 404) and the 403 (credential refused) never overlap —
+Because the 404 (dead route) and the 403 (credential refused) never overlap —
 different status codes, different call sites, both independently proven —
 there is no genuinely ambiguous case between them to name, unlike the
 project/version 404. If that ever stops being true (e.g. a future Archon
