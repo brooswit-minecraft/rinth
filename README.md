@@ -728,10 +728,13 @@ route side: `servers_v1.list()` (`GET /v1/servers`) takes no server id at
 all and returns the same `worlds[]`-bearing shape the id-scoped `get()`
 does (read-from-source: `@modrinth/api-client` 0.60.0 npm tarball, shasum
 `0a8f6224c632a8a2442dc054e6b4233fadfd2201`, and `modrinth/code` commit
-`ec5824331e51fed75069b170ee571b40899a9c6e`). That does not make the
-migration actionable — whether that route accepts a PAT at all is
-undecided — see "`servers upstream`'s open question" under "Known gaps /
-follow-ups" for the experiment that would settle it.
+`ec5824331e51fed75069b170ee571b40899a9c6e`) — and, confirmed by a live
+measurement, that route does accept a PAT: world ids are obtainable from
+CI today. That still doesn't make the migration actionable on its own —
+whether the v1 **content** route that would perform the actual re-point
+accepts a PAT is what remains open — see "`servers upstream`'s open
+question" under "Known gaps / follow-ups" for the experiment that would
+settle it.
 
 This 404 and these 403s no longer reach a caller as bare API strings: see
 "`servers` diagnosis" below for the two sibling messages/`reason` values
@@ -1599,9 +1602,9 @@ published) is what makes "no match yet" retryable (exit 7,
 `reinstall` route `servers upstream` calls is dead at the router — see
 "Authentication — what a token can and cannot do" above and "Known gaps /
 follow-ups" below. This recipe documents the intended shape of the deploy
-pipeline; whether and how it can be unblocked is a genuinely open question
-(see "Known gaps / follow-ups"), so don't wire it into a real pipeline
-yet.
+pipeline; whether the v1 content route it would need to migrate to can be
+unblocked is still a genuinely open question (see "Known gaps /
+follow-ups"), so don't wire it into a real pipeline yet.
 
 ## Known gaps / follow-ups
 
@@ -1641,13 +1644,13 @@ yet.
   simply never mounted** — this evidence does not distinguish the two,
   and this bullet does not claim which.
   **The world-id blocker this migration was previously cut on is
-  disproven.** `GET /v1/servers` (`servers_v1.list()`) takes no server id
-  at all and returns the same `worlds[]`-bearing shape the id-scoped
-  `get()` does, so a world id no longer *requires* the per-server `GET`
-  that 403s. The honest limit: that route's own PAT-reachability is
-  unknown, so this makes the migration live again, not actionable.
-  **Whether any CI-obtainable credential can reach the v1 servers surface
-  at all is genuinely undecided.** See "`servers upstream`'s open
+  disproven end-to-end, not merely on the route side.** `GET
+  /v1/servers` (`servers_v1.list()`) takes no server id at all, returns
+  the same `worlds[]`-bearing shape the id-scoped `get()` does, and —
+  confirmed by a live measurement — accepts a PAT: world ids are
+  obtainable from CI today. **What remains genuinely undecided is
+  narrower now: whether the v1 content route that would actually
+  perform the re-point accepts a PAT.** See "`servers upstream`'s open
   question" below for the full account and the one experiment that would
   settle it. A caller hitting this today sees exit 4 (`NotFound`) with
   `reason: "servers_upstream_route_dead"` — see "`rinth servers
@@ -1727,67 +1730,77 @@ yet.
   cannot be undone by deleting something afterward. Only the refusal path
   (which never PATCHes) is exercised live, against a real approved project.
 
-### `servers upstream`'s open question: is the v1 route reachable from CI at all?
+### `servers upstream`'s open question: is the v1 content route reachable from CI at all?
 
 The v0 `reinstall` route returns HTTP 404 regardless of credentials, and
 what produces that 404 is not visible from outside Modrinth (see above).
-Migrating to the v1 content API is not attempted in this repo, and
-whether it *can* be reached from CI is genuinely undecided — not because
-nobody has looked, but because the code that would settle it is not
-public.
+Migrating to the v1 content API is not attempted in this repo. Whether
+the v1 **content** route — the one that would actually perform the
+re-point — can be reached from CI is still genuinely undecided; the v1
+**listing** route's PAT-reachability, covered below, is not.
 
-**Why it's undecided.** `servers`/Archon routes are not implemented in
-`labrinth` (Modrinth's public API repo, `github.com/modrinth/code`) — they
-go to a separate service, `archon.modrinth.com`, whose router and auth
-guard are not published anywhere in that repo (read-from-source at commit
+**Why the content route stays undecided.** `servers`/Archon routes are
+not implemented in `labrinth` (Modrinth's public API repo,
+`github.com/modrinth/code`) — they go to a separate service,
+`archon.modrinth.com`, whose router and auth guard are not published
+anywhere in that repo (read-from-source at commit
 `ec5824331e51fed75069b170ee571b40899a9c6e`; no submodule or pointer to
-where Archon's source lives was found either). No amount of source-reading
-against the public repo can determine what a v1 servers call would return
-for a PAT — only a live call can.
+where Archon's source lives was found either). No amount of
+source-reading against the public repo can determine what a live call to
+the content route would do for a PAT — only a live call can, and (unlike
+the listing route) nobody has made one: it is a mutating call against a
+real, paid server, and running it has not been authorized.
 
-**The blocker this migration was previously cut on is disproven on the
-route side.** It was cut on "it needs a world id from a per-server `GET`
-that itself 403s." That is wrong: `servers_v1.list()` (`GET
-/v1/servers`) takes **no server id at all**, and returns the same
-`worlds[]`-bearing shape the id-scoped `get()` does (read-from-source: the
-published `@modrinth/api-client` 0.60.0 npm tarball, shasum
+**The blocker this migration was previously cut on is disproven
+end-to-end, not merely on the route side.** It was cut on "it needs a
+world id from a per-server `GET` that itself 403s." `servers_v1.list()`
+(`GET /v1/servers`) takes **no server id at all** and returns the same
+`worlds[]`-bearing shape the id-scoped `get()` does (read-from-source:
+the published `@modrinth/api-client` 0.60.0 npm tarball, shasum
 `0a8f6224c632a8a2442dc054e6b4233fadfd2201`, and `modrinth/code` at the
-pinned commit above). **The honest limit:** this only shows a world id is
-obtainable from a route that needs no server id — it says nothing about
-whether *that* route accepts a PAT. That is the open question.
+pinned commit above) — and, as of a live measurement below, that route is
+confirmed PAT-reachable, not merely theorized to be. World ids are
+obtainable from CI today. **The honest limit that remains:** none of
+this says whether the *content* route accepts a PAT. That is now the
+whole of the open question.
 
-**The experiment that would settle it.** Requires a real Modrinth-hosted
-server and the existing `MODRINTH_TOKEN` PAT — no new credential is
-needed for step 1. Everything below must go through
-`@modrinth/api-client`, never hand-rolled `curl`: an unauthenticated probe
-against Archon is provably uninformative — every path tried, including
-one the client itself marks `skipAuth` and used as a control, returns an
-identical `HTTP 426 "unsupported archon request version"` before any
-routing decision is made.
+**The experiment.** Step 1 (is the v1 listing route PAT-reachable?) is
+now a completed measurement, not a proposal; step 3 (does the content
+route accept a PAT and actually change anything?) remains open. Anything
+run here must go through `@modrinth/api-client`, never hand-rolled
+`curl`: an unauthenticated probe against Archon is provably
+uninformative — every path tried, including one the client itself marks
+`skipAuth` and used as a control, returns an identical `HTTP 426
+"unsupported archon request version"` before any routing decision is
+made.
 
-1. Call `client.archon.servers_v1.list()` (`GET /v1/servers`, no server
-   id) with the existing PAT.
-   - `200` with `worlds[]` carrying ids → the v1 surface accepts a PAT,
-     world ids are in hand, and the migration is unblocked.
-   - `403` → the boundary covers v1 listing too.
-   - `404` → the v1 servers surface is not routed for this caller.
-2. **Mandatory control:** repeat step 1 with a deliberately invalid token.
-   A byte-identical response to step 1 means the result is a **router**
-   fact, not a **credential** fact — without this control, a 404 or 403 in
-   step 1 means very little. This is the same control that made the v0
-   reinstall-404 finding above trustworthy in the first place.
-3. Only if step 1 returns a world id: call
+1. **DONE.** `client.archon.servers_v1.list()` (`GET /v1/servers`, no
+   server id) with a real PAT. [attributed-live-run — rinth CI run
+   `33676566812`, `integration` job, PR #34: a probe added for a
+   different, unrelated change, not this ticket's own work] returned
+   `200`, one server, a non-empty `worlds[]` array, and a non-empty
+   string world id. **The v1 listing surface accepts a PAT, and world
+   ids are obtainable in CI.**
+2. **DONE — the mandatory control.** The identical call with a
+   deliberately invalid token returned `401`, distinguishable from the
+   real-PAT `200` — so step 1's result is a **credential** fact, not a
+   **router** artefact. Same discipline as the v0 reinstall-404 finding
+   above: without this control, step 1's `200` would mean very little.
+3. **STILL OPEN.** Call
    `client.archon.content_v1.installContent(serverId, worldId, { content_variant: 'modpack', spec: { platform: 'modrinth', project_id, version_id }, soft_override: false })`,
-   then **read the server back** and confirm the world's content actually
-   changed. A `2xx` response is not itself proof — a route that accepts
-   the write, returns success, and changes nothing is exactly the failure
-   mode that motivated rewriting `project submit` earlier in this
-   project's history (see "`rinth project submit`" above).
+   using a world id from step 1, then **read the server back** and
+   confirm the world's content actually changed. A `2xx` response is not
+   itself proof — a route that accepts the write, returns success, and
+   changes nothing is exactly the failure mode that motivated rewriting
+   `project submit` earlier in this project's history (see "`rinth
+   project submit`" above).
 
-This repo does not run this experiment: it requires a live Modrinth
-account holder holding both the PAT and a real server, and no
-`MODRINTH_TOKEN` exists in any environment this codebase's own tooling
-runs in.
+Step 3 has not been run: it is a mutating call against a real, paid
+server, and running it has not been authorized. Steps 1 and 2 were run
+by someone else's probe in rinth's CI, for a different, unrelated
+change — not from this environment or this ticket's own tooling. This
+development environment still holds no `MODRINTH_TOKEN`, and no call of
+any kind was made from here.
 
 ## Exit codes
 
