@@ -75,9 +75,11 @@ left untouched. `--json` is byte-for-byte unchanged everywhere.
   with the real PAT, plus the identical call with a deliberately invalid
   token as a mandatory positive control. It **reports rather than
   asserts**: a 401/403/404 from Archon is a valid, passing, recorded
-  outcome, not a build failure — only a non-HTTP transport/client error, or
-  the invalid-token control itself unexpectedly succeeding, fails the test.
-  Logs counts and booleans only (server count, whether each server's
+  outcome, not a build failure, and neither is the invalid-token control
+  unexpectedly returning 2xx (reported as an explicit INCONCLUSIVE
+  finding instead) — only a rejection with no recognizable HTTP status at
+  all (a genuine transport/client error) fails the test. Logs counts and
+  booleans only (server count, whether each server's
   `worlds` array is non-empty, how many worlds carry a non-empty string
   `id`) — never server ids, names, or any credential. Loud, unmissable skip
   line when `MODRINTH_TOKEN` is unset. First observed run (rinth run
