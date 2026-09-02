@@ -119,6 +119,12 @@ plain sight. (The flag also appears as `[--version-number <v>]`, so match
 the substring rather than splitting on spaces — both of those false
 negatives were hit for real while verifying this.)
 
+As of a later release than the transcripts below, `rinth --version` (see
+"Help & version" further down) is the direct answer to this same question —
+prefer `rinth --version | grep -qx "rinth <expected>"` for a *future* re-pin
+over the `grep -c version-number` workaround. It didn't exist yet at either
+re-pin captured here, which is why neither transcript uses it.
+
 Both accounts track the current release; the transcripts below were
 captured during the `v0.8.0` → `v0.9.0` re-pin, and are reproduced verbatim
 because the procedure and the two false negatives they document are
@@ -499,6 +505,42 @@ rinth project icon my-draft-mod --file icon.png
 The extension goes in the query string, not the filename or a form field —
 `rinth` infers it from `--file`'s extension so you never write `?ext=`
 yourself. Both sides send the raw image bytes as the body, never multipart.
+
+## Help & version
+
+Every level of the command line answers `--help`/`-h` with usage text
+specific to what was asked, and `rinth help [<command> [<subcommand>]]` is
+the same thing spelled as a command instead of a flag:
+
+```sh
+rinth --help                    # top-level: lists every command group, generated from the registry
+rinth help                      # same as above
+rinth project --help            # the project group's usage
+rinth help project              # same
+rinth project icon --help       # the icon subcommand's own usage, where a subcommand-specific string exists
+rinth versions latest --help    # versions has no per-subcommand split for list/latest — this is the group usage, a deliberate floor, not a bug
+```
+
+All of the above exit `0` — asking for help is not a usage error. A
+genuinely unrecognized command or subcommand still exits `2`, unchanged:
+`rinth bogus`, `rinth project __bogus__`, and `rinth help bogus` all do.
+
+`rinth --version` prints the installed `package.json` version and exits `0`.
+Like every `--help` path above, it works with no `MODRINTH_TOKEN` set and
+never constructs the real network transport.
+
+**Compatibility note, for anything that greps `--help` as an install
+probe** (the fleet install section above did, before `rinth help`/`rinth
+--version` existed): the top-level banner's first line (`rinth — a Modrinth
+CLI`) and its exit code (`0`) are unchanged — a probe matching that line
+still passes. What's new is the content *after* that line (previously just
+one generic usage line, now the full command list and per-group/subcommand
+usage) and the exit code stays `0` throughout, so a probe checking only
+"exit 0 and this first line" cannot regress. `--help` was never actually a
+*version* proof, though — `v0.8.0` and `v0.9.0` printed it identically (see
+"check a version-distinguishing flag" above) — `rinth --version` is the
+honest, direct answer to that question and should be preferred for it going
+forward.
 
 ## Commands
 

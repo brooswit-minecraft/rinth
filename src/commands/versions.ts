@@ -397,9 +397,24 @@ async function deleteVersionCommand(args: string[], ctx: CommandContext): Promis
   return ExitCode.Ok;
 }
 
+/**
+ * `args[0]` is the subcommand being asked about (e.g. from `rinth versions
+ * <sub> --help`). Only `delete` has its own usage string — `list`/`latest`
+ * share the top-level USAGE (which already documents their differences
+ * inline via the "[latest only: ...]" clause), so this is a deliberate
+ * group-level floor for those two, not an oversight.
+ */
+function usageFor(args: string[]): string {
+  const [sub] = args;
+  if (sub === "delete") return DELETE_USAGE;
+  return USAGE;
+}
+
 export const versionsCommand: Command = {
   name: "versions",
   describe: "List, inspect, and delete a project's versions",
+
+  usage: usageFor,
 
   async run(args, ctx) {
     const [sub, ...rest] = args;

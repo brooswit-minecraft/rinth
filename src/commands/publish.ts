@@ -237,5 +237,8 @@ async function run(args: string[], ctx: CommandContext): Promise<number> {
 export const publishCommand: Command = {
   name: "publish",
   describe: "Create a version by uploading a file (e.g. a .mrpack) to a project",
+  usage() {
+    return USAGE;
+  },
   run,
 };
