@@ -9,8 +9,8 @@ enforces that this file has a `## [<version>]` heading matching the
 
 ## [Unreleased]
 
-Docs-and-messages patch: no API, flag, route, reason-string, or exit-code
-change. `servers upstream`'s diagnosis messages
+This docs-and-messages change touches no API, flag, route, reason-string,
+or exit code. `servers upstream`'s diagnosis messages
 (`servers_upstream_route_dead`, `servers_credential_refused`) and this
 README's account of the same topic previously stated more than the
 evidence supports on two separate points: that a v1 content-API migration
