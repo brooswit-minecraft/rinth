@@ -227,8 +227,18 @@ function primaryFileName(version: Labrinth.Versions.v2.Version): string {
   return primary?.filename ?? "-";
 }
 
+/**
+ * RINTH-22: the old "primary file" column named exactly one file and said
+ * nothing about whether there were others — a version CAN carry several
+ * files. Now names the primary and, when more exist, how many.
+ */
+function filesColumn(version: Labrinth.Versions.v2.Version): string {
+  const extra = version.files.length - 1;
+  return extra > 0 ? `${primaryFileName(version)} (+${extra} more)` : primaryFileName(version);
+}
+
 function formatTable(versions: Labrinth.Versions.v2.Version[]): string {
-  const headers = ["id", "version_number", "channel", "loaders", "game versions", "date", "primary file"];
+  const headers = ["id", "version_number", "channel", "loaders", "game versions", "date", "files", "changelog", "dependencies"];
   const rows = versions.map((v) => [
     v.id,
     v.version_number,
@@ -236,7 +246,13 @@ function formatTable(versions: Labrinth.Versions.v2.Version[]): string {
     v.loaders.join(","),
     v.game_versions.join(","),
     v.date_published,
-    primaryFileName(v),
+    filesColumn(v),
+    // changelog is prose, same family as project.body — never dumped into a
+    // table cell, just an honest length so a reader knows there's more (or
+    // isn't). versions list's `--json` (or `rinth publish --changelog`'s
+    // own source) has the full text.
+    `${v.changelog.length} chars`,
+    `${v.dependencies.length}`,
   ]);
 
   const widths = headers.map((header, i) =>

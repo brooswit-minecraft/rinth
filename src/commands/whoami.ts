@@ -18,7 +18,14 @@ export const whoamiCommand: Command = {
     if (ctx.json) {
       printJson(user);
     } else {
-      printHuman(`${user.username} (${user.id})`);
+      // RINTH-22: `role` is included because it answers the decision a
+      // reader actually runs `whoami` to make — "is this the identity/token
+      // I think it is" — in a way username/id alone don't (a moderator vs.
+      // developer token behaves differently). Everything else on the user
+      // object is either already answered by username/id, PII (email), or
+      // secret-adjacent (payout_data, has_totp/has_password) and must never
+      // reach stdout regardless of whether it would help this decision.
+      printHuman(`${user.username} (${user.id}) [${user.role}]`);
     }
 
     return ExitCode.Ok;
