@@ -109,24 +109,25 @@ export interface CreateVersionFile {
 
 /**
  * Extensions labrinth's `PATCH /project/{id}/icon` accepts, mapped to the
- * Content-Type sent with each byte stream — confirmed against
- * https://docs.modrinth.com/api/operations/changeprojecticon/ (fetched
- * directly; the vendored `@modrinth/api-client` 0.60.0 has no v2 icon
- * method to cross-check this against — only a v3 `projects_v3.changeIcon()`
- * — see `src/client/real.ts`). Shared between the real transport (Content-
- * Type header) and `rinth project icon`'s own extension validation
- * (`src/commands/project.ts`), so the two can never drift apart.
+ * Content-Type sent with each byte stream. The published API docs
+ * (https://docs.modrinth.com/api/operations/changeprojecticon/) overstate
+ * this set; the authority is labrinth's own server source —
+ * `get_image_content_type()` in `apps/labrinth/src/util/ext.rs`
+ * (github.com/modrinth/code) — which `match`es the extension and returns
+ * `None` (rejecting the upload) for anything not listed here. The vendored
+ * `@modrinth/api-client` 0.60.0 has no v2 icon method to cross-check this
+ * against — only a v3 `projects_v3.changeIcon()` — see `src/client/real.ts`.
+ * Shared between the real transport (Content-Type header) and `rinth
+ * project icon`'s own extension validation (`src/commands/project.ts`), so
+ * the two can never drift apart.
  */
 export const ICON_CONTENT_TYPES: Readonly<Record<string, string>> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
   bmp: "image/bmp",
   gif: "image/gif",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  png: "image/png",
   webp: "image/webp",
-  svg: "image/svg",
-  svgz: "image/svgz",
-  rgb: "image/rgb",
 };
 
 /**

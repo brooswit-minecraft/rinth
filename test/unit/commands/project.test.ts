@@ -6,6 +6,7 @@ import type { Labrinth } from "@modrinth/api-client";
 import { run } from "../../../src/cli.ts";
 import { apiError, createFakeTransport } from "../../../src/client/fake.ts";
 import type { CreateProjectRequest } from "../../../src/client/index.ts";
+import { ICON_CONTENT_TYPES } from "../../../src/client/index.ts";
 import { parseEditFlags, parseProjectCreateFlags } from "../../../src/commands/project.ts";
 import { ExitCode } from "../../../src/errors.ts";
 import { registerSecret, resetSecretsForTesting } from "../../../src/redact.ts";
@@ -1010,6 +1011,122 @@ describe("rinth project icon", () => {
     expect(code).toBe(ExitCode.Usage);
     expect(message).toContain("exe");
     expect(message).toContain("png");
+  });
+
+  test("RINTH-30 control: .svg is rejected locally, with NO upload attempted", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "rinth-project-icon-svg-"));
+    const svgPath = join(tmp, "icon.svg");
+    writeFileSync(svgPath, "<svg></svg>");
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    let call = 0;
+    const projects = [
+      fixtureProject({ icon_url: "https://cdn.modrinth.com/old.svg" }),
+      fixtureProject({ icon_url: "https://cdn.modrinth.com/new.svg" }),
+    ];
+    let uploaded = false;
+    const transport = createFakeTransport({
+      project: () => projects[Math.min(call++, projects.length - 1)] ?? fixtureProject(),
+      onUploadProjectIcon: () => {
+        uploaded = true;
+      },
+    });
+
+    const code = await run(["project", "icon", "my-draft-mod", "--file", svgPath], { transport });
+    const errCalls = errSpy.mock.calls;
+    errSpy.mockRestore();
+    logSpy.mockRestore();
+    rmSync(tmp, { recursive: true, force: true });
+
+    // This assertion is the DEFINITION OF DONE for RINTH-30, not the control observation:
+    // it will fail against today's unmodified code (see RINTH-30 PR body for the
+    // observed failure mode — code 0, uploaded true) and pass once ICON_CONTENT_TYPES
+    // is narrowed below.
+    expect(code).toBe(ExitCode.Usage);
+    expect(uploaded).toBe(false);
+    expect(String(errCalls[0]?.[0])).toContain("svg");
+  });
+
+  for (const ext of ["svg", "svgz", "rgb"]) {
+    test(`.${ext} is rejected with exit 2, before any transport call`, async () => {
+      const tmp = mkdtempSync(join(tmpdir(), `rinth-project-icon-${ext}-`));
+      const badPath = join(tmp, `icon.${ext}`);
+      writeFileSync(badPath, "not an accepted image");
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
+      let uploaded = false;
+      let getProjectCalled = false;
+      const transport = createFakeTransport({
+        project: () => {
+          getProjectCalled = true;
+          return fixtureProject();
+        },
+        onUploadProjectIcon: () => {
+          uploaded = true;
+        },
+      });
+
+      const code = await run(["project", "icon", "my-draft-mod", "--file", badPath], { transport });
+      const errCalls = errSpy.mock.calls;
+      errSpy.mockRestore();
+      rmSync(tmp, { recursive: true, force: true });
+
+      expect(code).toBe(ExitCode.Usage);
+      expect(uploaded).toBe(false);
+      expect(getProjectCalled).toBe(false);
+      expect(String(errCalls[0]?.[0])).toContain(ext);
+    });
+  }
+
+  for (const ext of Object.keys(ICON_CONTENT_TYPES)) {
+    test(`.${ext} still passes extension validation (accepted set unchanged for it)`, async () => {
+      const tmp = mkdtempSync(join(tmpdir(), `rinth-project-icon-ok-${ext}-`));
+      const goodPath = join(tmp, `icon.${ext}`);
+      writeFileSync(goodPath, "image bytes");
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
+      let call = 0;
+      const projects = [
+        fixtureProject({ icon_url: `https://cdn.modrinth.com/old.${ext}` }),
+        fixtureProject({ icon_url: `https://cdn.modrinth.com/new.${ext}` }),
+      ];
+      let uploadedExt: string | undefined;
+      const transport = createFakeTransport({
+        project: () => projects[Math.min(call++, projects.length - 1)] ?? fixtureProject(),
+        onUploadProjectIcon: (_idOrSlug, uploadExt) => {
+          uploadedExt = uploadExt;
+        },
+      });
+
+      const code = await run(["project", "icon", "my-draft-mod", "--file", goodPath], { transport });
+      logSpy.mockRestore();
+      rmSync(tmp, { recursive: true, force: true });
+
+      expect(code).toBe(ExitCode.Ok);
+      expect(uploadedExt).toBe(ext);
+    });
+  }
+
+  test("the rejection message enumerates exactly the accepted extensions, derived from ICON_CONTENT_TYPES", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "rinth-project-icon-msg-"));
+    const badPath = join(tmp, "icon.exe");
+    writeFileSync(badPath, "not an image");
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+    const transport = createFakeTransport();
+
+    const code = await run(["project", "icon", "my-draft-mod", "--file", badPath], { transport });
+    const errCalls = errSpy.mock.calls;
+    errSpy.mockRestore();
+    rmSync(tmp, { recursive: true, force: true });
+
+    expect(code).toBe(ExitCode.Usage);
+    const message = String(errCalls[0]?.[0]);
+    const accepted = Object.keys(ICON_CONTENT_TYPES);
+    expect(accepted).toEqual(["bmp", "gif", "jpeg", "jpg", "png", "webp"]);
+    for (const ext of accepted) {
+      expect(message).toContain(ext);
+    }
+    for (const ext of ["svg", "svgz", "rgb"]) {
+      expect(message).not.toContain(ext);
+    }
   });
 
   test("a missing/nonexistent --file is a usage error (exit 2)", async () => {

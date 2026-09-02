@@ -941,9 +941,8 @@ extensions (and the `Content-Type` sent with each):
 | `gif` | `image/gif` |
 | `webp` | `image/webp` |
 
-**Reconciled against the server source, which is narrower than the live
-docs this table used to cite.** labrinth's own extension→`Content-Type`
-mapping —
+**Reconciled against the server source, and the code now agrees with it.**
+labrinth's own extension→`Content-Type` mapping —
 [`apps/labrinth/src/util/ext.rs:3-11`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/util/ext.rs#L3-L11)'s
 `get_image_content_type()`, the function
 [`apps/labrinth/src/util/img.rs:57`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/util/img.rs#L57)'s
@@ -955,16 +954,14 @@ upload. The docs-sourced table this replaced also listed `svg`, `svgz`, and
 route today — `get_image_content_type()`'s match falls through to `None`
 for all three, which the caller turns into that same rejection. This
 command's own accepted-extension list (`ICON_CONTENT_TYPES` in
-`src/client/index.ts`) still includes `svg`/`svgz`/`rgb` from the
-docs-sourced reading; that mismatch is real and is not fixed here (a
-behavior change, out of scope for a docs-only evidence upgrade) — treat the
-table above, not `ICON_CONTENT_TYPES`, as the accurate list until that's
-reconciled in code.
+`src/client/index.ts`) has been narrowed to match: the table above and the
+code now agree, and the source of truth for both is `ext.rs`, not the
+published API docs.
 
 An unsupported extension is a usage error (exit 2) naming every extension
-`ICON_CONTENT_TYPES` accepts (currently the broader, docs-sourced list —
-see the reconciliation note above); a missing or nonexistent `--file` is
-also a usage error (exit 2), matching `publish --file`. **Size cap,
+`ICON_CONTENT_TYPES` accepts (the narrower, server-confirmed list above); a
+missing or nonexistent `--file` is also a usage error (exit 2), matching
+`publish --file`. **Size cap,
 confirmed from the server source**:
 [`apps/labrinth/src/routes/v3/projects.rs:2172-2176`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/routes/v3/projects.rs#L2172-L2176)
 reads the request body through `read_limited_from_payload(&mut payload,
@@ -1673,16 +1670,6 @@ into a real pipeline yet.
   environment. `test/integration/project-icon.integration.test.ts`
   and `test/integration/project-edit.integration.test.ts` are both gated on
   `RINTH_TEST_PROJECT` like `publish`'s, which is deliberately left unset.
-- **`ICON_CONTENT_TYPES` (`src/client/index.ts:118-128`) accepts three
-  extensions labrinth's server source does not** — `svg`, `svgz`, and
-  `rgb`, carried over from the docs-sourced reading `project icon`'s
-  section above documents and reconciles. `rinth project icon <id> --file
-  logo.svg` passes rinth's own usage check and uploads, then fails at the
-  API, since `get_image_content_type()`
-  (`apps/labrinth/src/util/ext.rs:3-11`) doesn't match any of the three.
-  Fixing `ICON_CONTENT_TYPES` to the narrower, server-confirmed list
-  (`bmp`/`gif`/`jpeg`/`jpg`/`png`/`webp`) is a deliberate, deferred code
-  change — out of scope for the docs-only evidence upgrade that found it.
 - **Public reads still require `MODRINTH_TOKEN`** — there is no tokenless
   mode, even for routes the Modrinth API itself doesn't require auth for.
 - **npm publish under `@brooswit` is deferred** — it needs the
