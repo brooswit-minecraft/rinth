@@ -73,16 +73,15 @@ describe("diagnoseNotFound", () => {
 describe("diagnoseUpstreamRouteDead", () => {
   const ENDPOINT = "POST /modrinth/v0/servers/srv_123/reinstall";
 
-  test("rewrites a 404 CliError's message to name the failing reinstall route without asserting a mechanism or a known remedy", () => {
+  test("rewrites a 404 CliError's message to name the dead v0 reinstall route without claiming a known remedy", () => {
     const original = new CliError("Not Found", ExitCode.NotFound, { status: 404, endpoint: ENDPOINT });
 
     const diagnosed = diagnoseUpstreamRouteDead(original);
 
     expect(diagnosed.message).toContain("reinstall");
-    expect(diagnosed.message).toContain("regardless of credentials");
-    expect(diagnosed.message).toContain("not visible from outside Modrinth");
+    expect(diagnosed.message).toContain("dead at the router");
+    expect(diagnosed.message).toContain("independent of credentials");
     expect(diagnosed.message).toContain("undecided");
-    expect(diagnosed.message).not.toContain("dead at the router");
     expect(diagnosed.message).not.toContain("migration to the v1 content API, not yet done");
     expect(diagnosed.message).not.toMatch(/^Not Found$/);
   });

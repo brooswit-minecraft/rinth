@@ -52,11 +52,11 @@ export function diagnoseNotFound(error: CliError, subject: string): CliError {
 //
 //   - `servers upstream`'s reinstall call always hits the v0
 //     `POST /modrinth/v0/servers/{id}/reinstall` route. A 404 from THIS
-//     specific call is proven credential-independent, not resource-
-//     dependent: a deliberately invalid token got the exact same 404 (see
-//     README "Authentication — what a token can and cannot do"). What
-//     inside Archon actually produces the 404 is not visible from outside
-//     Modrinth — do not assert a mechanism (router, removed, unmounted).
+//     specific call is proven router-level, not credential- or
+//     resource-dependent: a deliberately invalid token got the exact same
+//     404 (see README "Authentication — what a token can and cannot do").
+//     Whether the route was removed or simply never mounted is not
+//     settled by that evidence and this helper does not try to say.
 //   - Every per-server Archon endpoint this CLI calls (`servers get`,
 //     `power`, `exec`'s WebSocket auth, and `upstream`'s read-back) rejects
 //     a PAT with 403. Confirmed from labrinth's published PAT scope enum
@@ -75,14 +75,7 @@ export function diagnoseNotFound(error: CliError, subject: string): CliError {
 // reason diagnoseNotFound does: a wrong guess here would be worse than no
 // diagnosis at all.
 
-/**
- * The `reason` for a 404 from `servers upstream`'s reinstall call. Keeps
- * the word "dead" even though the prose above and every message below
- * deliberately avoids it (see the comment block above): this is a
- * machine contract a fail-closed CI consumer branches on by exact
- * string, not a claim about why the 404 happens. Do not "helpfully"
- * rename it to match the prose.
- */
+/** The `reason` for a 404 from `servers upstream`'s dead v0 reinstall route. */
 export const UPSTREAM_ROUTE_DEAD_REASON = "servers_upstream_route_dead";
 
 /** The `reason` for a 403 from a per-server Archon endpoint. */
@@ -90,8 +83,8 @@ export const SERVER_CREDENTIAL_REFUSED_REASON = "servers_credential_refused";
 
 /**
  * Rewrites a 404 from `servers upstream`'s `setUpstream` call (the v0
- * `reinstall` route) into a message naming the failing route explicitly
- * and pointing at where its resolution is tracked, instead of a bare API
+ * `reinstall` route) into a message naming the dead route explicitly and
+ * pointing at where its resolution is tracked, instead of a bare API
  * string. Preserves `exitCode`/`status`/`endpoint` exactly, same contract
  * as `diagnoseNotFound`. Any error that isn't a 404 passes through
  * unchanged.
@@ -103,11 +96,10 @@ export function diagnoseUpstreamRouteDead(error: CliError): CliError {
 
   const message =
     "servers upstream failed: HTTP 404 from the v0 `POST /modrinth/v0/servers/{id}/reinstall` route. " +
-    "This call returns this exact same 404 regardless of credentials, server, or project — a " +
-    "deliberately invalid token gets it too (see README \"Authentication — what a token can and cannot " +
-    "do\") — and what produces it is not visible from outside Modrinth. There is nothing to change on " +
-    "your end: this is a known upstream condition whose resolution is undecided — see README \"Known " +
-    "gaps / follow-ups\" for the current state of knowledge.";
+    "This route is dead at the router, independent of credentials, server, or project — a deliberately " +
+    "invalid token gets this exact same 404 (see README \"Authentication — what a token can and cannot " +
+    "do\"). There is nothing to change on your end: this is a known upstream condition whose resolution " +
+    "is undecided — see README \"Known gaps / follow-ups\" for the current state of knowledge.";
 
   return new CliError(message, error.exitCode, {
     status: error.status,
