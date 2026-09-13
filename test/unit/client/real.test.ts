@@ -567,7 +567,7 @@ describe("createRealTransport", () => {
                   {
                     id: "world_active",
                     is_active: true,
-                    content: { modloader: "neo_forge", modloader_version: "21.1.250", game_version: "1.21.1" },
+                    content: { modloader: "neoforge", modloader_version: "21.1.250", game_version: "1.21.1" },
                   },
                 ],
               },

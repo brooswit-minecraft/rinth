@@ -344,9 +344,10 @@ export function createRealTransport(): Transport {
         if (!world.content) {
           throw new Error(`Server ${serverId} world ${world.id} has no current runtime content`);
         }
+        const loader = world.content.modloader === "neoforge" ? "neo_forge" : world.content.modloader;
         await client.archon.content_v1.installContent(serverId, world.id, {
           content_variant: "bare",
-          loader: world.content.modloader as Archon.Content.v1.Modloader,
+          loader: loader as Archon.Content.v1.Modloader,
           version: world.content.modloader_version,
           game_version: world.content.game_version,
           soft_override: true,
