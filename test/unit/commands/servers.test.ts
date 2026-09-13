@@ -591,6 +591,39 @@ describe("rinth servers install-mrpack", () => {
   });
 });
 
+describe("rinth servers refresh-runtime", () => {
+  test("dispatches the server id and reports success without sensitive fields", async () => {
+    let received: string | undefined;
+    const transport = createFakeTransport({
+      onRefreshRuntime(serverId) {
+        received = serverId;
+      },
+    });
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+
+    const code = await run(["--json", "servers", "refresh-runtime", "srv_123"], { transport });
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(received).toBe("srv_123");
+    const printed = String(logSpy.mock.calls[0]?.[0]);
+    logSpy.mockRestore();
+    expect(JSON.parse(printed)).toEqual({ id: "srv_123", refreshed: true });
+    expect(printed).not.toContain("sftp");
+    expect(printed).not.toContain("token");
+  });
+
+  test("rejects missing or extra arguments before transport", async () => {
+    let called = false;
+    const transport = createFakeTransport({ onRefreshRuntime: () => (called = true) });
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+
+    expect(await run(["servers", "refresh-runtime"], { transport })).toBe(ExitCode.Usage);
+    expect(await run(["servers", "refresh-runtime", "srv_123", "extra"], { transport })).toBe(ExitCode.Usage);
+    expect(called).toBe(false);
+    errSpy.mockRestore();
+  });
+});
+
 describe("rinth servers exec", () => {
   afterEach(() => {
     resetSecretsForTesting();

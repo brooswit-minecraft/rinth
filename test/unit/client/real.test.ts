@@ -542,6 +542,98 @@ describe("createRealTransport", () => {
       expect((caught as CliError).exitCode).toBe(ExitCode.ApiError);
     });
 
+    test("refreshRuntime reinstalls the active world's current bare runtime", async () => {
+      const requests: Array<{ url: string; body: unknown }> = [];
+      let request = 0;
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input, init) => {
+        requests.push({
+          url: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        request++;
+        if (request === 1) {
+          return new Response(
+            JSON.stringify([
+              {
+                id: "srv_123",
+                sftp_username: "secret-user",
+                sftp_password: "secret-password",
+                worlds: [
+                  {
+                    id: "world_first",
+                    is_active: false,
+                    content: { modloader: "fabric", modloader_version: "0.16.0", game_version: "1.20.1" },
+                  },
+                  {
+                    id: "world_active",
+                    is_active: true,
+                    content: { modloader: "neo_forge", modloader_version: "21.1.250", game_version: "1.21.1" },
+                  },
+                ],
+              },
+            ]),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(null, { status: 204 });
+      }) as typeof fetch);
+
+      const transport = createRealTransport();
+      await expect(transport.refreshRuntime("srv_123")).resolves.toBeUndefined();
+      fetchSpy.mockRestore();
+
+      expect(requests).toHaveLength(2);
+      expect(requests[1]?.url).toContain("/v1/servers/srv_123/worlds/world_active/content");
+      expect(requests[1]?.body).toEqual({
+        content_variant: "bare",
+        loader: "neo_forge",
+        version: "21.1.250",
+        game_version: "1.21.1",
+        soft_override: true,
+      });
+      expect(JSON.stringify(requests)).not.toContain("secret-password");
+    });
+
+    test("refreshRuntime falls back to the first world", async () => {
+      const bodies: unknown[] = [];
+      let request = 0;
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (_input, init) => {
+        if (init?.body) bodies.push(JSON.parse(String(init.body)));
+        request++;
+        if (request === 1) {
+          return new Response(
+            JSON.stringify([
+              {
+                id: "srv_123",
+                worlds: [
+                  {
+                    id: "world_first",
+                    is_active: false,
+                    content: { modloader: "fabric", modloader_version: "0.16.0", game_version: "1.20.1" },
+                  },
+                ],
+              },
+            ]),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(null, { status: 204 });
+      }) as typeof fetch);
+
+      await expect(createRealTransport().refreshRuntime("srv_123")).resolves.toBeUndefined();
+      fetchSpy.mockRestore();
+
+      expect(bodies).toEqual([
+        {
+          content_variant: "bare",
+          loader: "fabric",
+          version: "0.16.0",
+          game_version: "1.20.1",
+          soft_override: true,
+        },
+      ]);
+    });
+
     test("installMrpack gets upload auth then posts multipart bytes to the hosting node", async () => {
       const requests: Array<{ url: string; method: string; authorization: string | null }> = [];
       let request = 0;

@@ -33,7 +33,7 @@ async function powerDiagnosed(id: string, action: PowerAction, ctx: CommandConte
 }
 
 const TOP_USAGE =
-  "Usage: rinth servers list | get <id> | power <id> start|stop|restart|kill | upstream <id> --project <slug|id> --version <version_id> [--restart] | install-mrpack <id> --file <path> | exec <id> [--wait <ms>] <command...>";
+  "Usage: rinth servers list | get <id> | power <id> start|stop|restart|kill | upstream <id> --project <slug|id> --version <version_id> [--restart] | refresh-runtime <id> | install-mrpack <id> --file <path> | exec <id> [--wait <ms>] <command...>";
 
 async function list(ctx: CommandContext): Promise<number> {
   const servers = await ctx.transport.listServers();
@@ -206,6 +206,24 @@ async function upstream(args: string[], ctx: CommandContext): Promise<number> {
 
 const INSTALL_MRPACK_USAGE = "Usage: rinth servers install-mrpack <id> --file <path>";
 
+const REFRESH_RUNTIME_USAGE = "Usage: rinth servers refresh-runtime <id>";
+
+async function refreshRuntime(args: string[], ctx: CommandContext): Promise<number> {
+  const [id] = args;
+  if (!id || args.length !== 1) {
+    throw new CliError(REFRESH_RUNTIME_USAGE, ExitCode.Usage);
+  }
+
+  await ctx.transport.refreshRuntime(id);
+
+  if (ctx.json) {
+    printJson({ id, refreshed: true });
+  } else {
+    printHuman(`Runtime refreshed on ${id}.`);
+  }
+  return ExitCode.Ok;
+}
+
 async function installMrpack(args: string[], ctx: CommandContext): Promise<number> {
   const [id, flag, path] = args;
   if (!id || flag !== "--file" || !path || args.length !== 3) {
@@ -374,6 +392,7 @@ function usageFor(args: string[]): string {
   if (sub === "get") return GET_USAGE;
   if (sub === "power") return POWER_USAGE;
   if (sub === "upstream") return UPSTREAM_USAGE;
+  if (sub === "refresh-runtime") return REFRESH_RUNTIME_USAGE;
   if (sub === "install-mrpack") return INSTALL_MRPACK_USAGE;
   if (sub === "exec") return EXEC_USAGE;
   return TOP_USAGE;
@@ -399,6 +418,9 @@ export const serversCommand: Command = {
     }
     if (sub === "upstream") {
       return upstream(rest, ctx);
+    }
+    if (sub === "refresh-runtime") {
+      return refreshRuntime(rest, ctx);
     }
     if (sub === "install-mrpack") {
       return installMrpack(rest, ctx);

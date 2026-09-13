@@ -333,6 +333,26 @@ export function createRealTransport(): Transport {
         });
       }, `POST /v1/servers/${serverId}/worlds/:world_id/content`),
 
+    refreshRuntime: (serverId: string) =>
+      call(async () => {
+        const servers = await client.archon.servers_v1.list();
+        const server = servers.find((candidate) => candidate.id === serverId);
+        const world = server?.worlds.find((candidate) => candidate.is_active) ?? server?.worlds[0];
+        if (!world) {
+          throw new Error(`Server ${serverId} has no installable world`);
+        }
+        if (!world.content) {
+          throw new Error(`Server ${serverId} world ${world.id} has no current runtime content`);
+        }
+        await client.archon.content_v1.installContent(serverId, world.id, {
+          content_variant: "bare",
+          loader: world.content.modloader as Archon.Content.v1.Modloader,
+          version: world.content.modloader_version,
+          game_version: world.content.game_version,
+          soft_override: true,
+        });
+      }, `POST /v1/servers/${serverId}/worlds/:world_id/content`),
+
     installMrpack: (serverId: string, file: CreateVersionFile) =>
       call(async () => {
         const auth = await client.archon.servers_v0.getReinstallMrpackAuth(serverId);

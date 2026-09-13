@@ -190,6 +190,8 @@ export interface Transport {
   power(serverId: string, action: PowerAction): Promise<void>;
   /** Install a Modrinth modpack version through Archon's v1 content lifecycle. */
   setUpstream(serverId: string, projectId: string, versionId: string): Promise<void>;
+  /** Reinstall the active world's current bare runtime through Archon's v1 content lifecycle. */
+  refreshRuntime(serverId: string): Promise<void>;
   /** Reinstall a hosted server from an uploaded .mrpack through Archon's two-step upload flow. */
   installMrpack(serverId: string, file: CreateVersionFile): Promise<void>;
   /** Resolve a project slug or id to its canonical id via labrinth `GET /project/:idOrSlug`. */
