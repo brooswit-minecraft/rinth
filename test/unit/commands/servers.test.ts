@@ -446,8 +446,8 @@ describe("rinth servers upstream", () => {
       expect(printed.error.reason).toBe("servers_upstream_route_dead");
     });
 
-    test("a real 403 from the per-server Archon read-back names the server and states an upstream limitation, with a distinct reason under --json", async () => {
-      const errSpy = spyOn(console, "error").mockImplementation(() => {});
+    test("does not fall back to the PAT-denied v0 read-back after the v1 install", async () => {
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
       const transport = createFakeTransport({
         resolveProjectId: "AABBCCDD",
         serverError: apiError(ExitCode.AuthMissing, "Forbidden", {
@@ -461,17 +461,13 @@ describe("rinth servers upstream", () => {
         { transport },
       );
 
-      expect(code).toBe(ExitCode.AuthMissing);
-      const printed = JSON.parse(String(errSpy.mock.calls[0]?.[0])) as {
-        error: { message: string; reason: string | null };
-      };
-      errSpy.mockRestore();
-
-      expect(printed.error.message).not.toBe("HTTP 403 GET /modrinth/v0/servers/srv_123: Forbidden");
-      expect(printed.error.message).toContain("srv_123");
-      expect(printed.error.message).toContain("upstream limitation");
-      expect(printed.error.message).not.toContain("session token");
-      expect(printed.error.reason).toBe("servers_credential_refused");
+      expect(code).toBe(ExitCode.Ok);
+      expect(JSON.parse(String(logSpy.mock.calls[0]?.[0]))).toEqual({
+        id: "srv_123",
+        upstream: { kind: "modpack", project_id: "AABBCCDD", version_id: "version_1" },
+        restarted: false,
+      });
+      logSpy.mockRestore();
     });
 
     test("a 403 from `servers get` is diagnosed the same way as upstream's read-back", async () => {

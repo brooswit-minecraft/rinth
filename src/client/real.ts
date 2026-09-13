@@ -319,10 +319,19 @@ export function createRealTransport(): Transport {
       call(() => client.archon.servers_v0.power(serverId, action), `POST /modrinth/v0/servers/${serverId}/power`),
 
     setUpstream: (serverId: string, projectId: string, versionId: string) =>
-      call(
-        () => client.archon.servers_v0.reinstall(serverId, { project_id: projectId, version_id: versionId }),
-        `POST /modrinth/v0/servers/${serverId}/reinstall`,
-      ),
+      call(async () => {
+        const servers = await client.archon.servers_v1.list();
+        const server = servers.find((candidate) => candidate.id === serverId);
+        const worldId = server?.worlds[0]?.id;
+        if (!worldId) {
+          throw new Error(`Server ${serverId} has no installable world`);
+        }
+        await client.archon.content_v1.installContent(serverId, worldId, {
+          content_variant: "modpack",
+          spec: { platform: "modrinth", project_id: projectId, version_id: versionId },
+          soft_override: true,
+        });
+      }, `POST /v1/servers/${serverId}/worlds/:world_id/content`),
 
     // Labrinth's `GET /project/:idOrSlug` accepts a project id OR its slug
     // interchangeably and returns the same `Project` shape either way, so

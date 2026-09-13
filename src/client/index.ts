@@ -188,7 +188,7 @@ export interface Transport {
   getServer(serverId: string): Promise<ServerDetail>;
   /** POST a power action via `servers_v0.power()`. */
   power(serverId: string, action: PowerAction): Promise<void>;
-  /** POST a modpack re-point via `servers_v0.reinstall()`. */
+  /** Install a Modrinth modpack version through Archon's v1 content lifecycle. */
   setUpstream(serverId: string, projectId: string, versionId: string): Promise<void>;
   /** Resolve a project slug or id to its canonical id via labrinth `GET /project/:idOrSlug`. */
   resolveProjectId(projectIdOrSlug: string): Promise<string>;

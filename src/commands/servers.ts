@@ -181,24 +181,19 @@ async function upstream(args: string[], ctx: CommandContext): Promise<number> {
     throw err;
   }
 
-  const server = await getServerDiagnosed(id, ctx);
-
-  let restarted = false;
-  if (restart) {
-    await powerDiagnosed(id, "Restart", ctx);
-    restarted = true;
-  }
+  // The v1 content installer owns the hosting stop/install/start lifecycle.
+  // Keep --restart accepted for compatibility, but do not call the PAT-denied
+  // legacy power route after a successful installation.
+  const restarted = restart;
 
   if (ctx.json) {
     printJson({
       id,
-      upstream: server.upstream
-        ? { kind: server.upstream.kind, project_id: server.upstream.project_id, version_id: server.upstream.version_id }
-        : null,
+      upstream: { kind: "modpack", project_id: projectId, version_id: version },
       restarted,
     });
   } else {
-    printHuman(`Upstream set on ${id}: ${formatUpstream(server.upstream)}`);
+    printHuman(`Upstream set on ${id}: modpack ${projectId}@${version}`);
     if (restarted) {
       printHuman("Restart sent.");
     }

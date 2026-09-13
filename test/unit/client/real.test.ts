@@ -509,7 +509,17 @@ describe("createRealTransport", () => {
     });
 
     test("setUpstream resolves on a 200/204 response", async () => {
-      const fetchSpy = mockFetch(() => new Response(null, { status: 204 }));
+      let request = 0;
+      const fetchSpy = mockFetch(() => {
+        request++;
+        if (request === 1) {
+          return new Response(JSON.stringify([{ id: "srv_123", worlds: [{ id: "world_1" }] }]), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(null, { status: 204 });
+      });
 
       const transport = createRealTransport();
       await expect(transport.setUpstream("srv_123", "AABBCCDD", "version_1")).resolves.toBeUndefined();
