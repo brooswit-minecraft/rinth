@@ -4,6 +4,9 @@ import { apiError, createFakeConsoleSocket, createFakeTransport } from "../../..
 import type { PublicServer, ServerDetail } from "../../../src/client/index.ts";
 import { ExitCode } from "../../../src/errors.ts";
 import { resetSecretsForTesting } from "../../../src/redact.ts";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 /** Lets exec()'s pending `await`s (the `getWebSocketAuth` fake call, the `--wait` timer) settle before the test drives the fake socket. */
 function tick(): Promise<void> {
@@ -547,6 +550,44 @@ describe("rinth servers upstream", () => {
       expect(printed.error.reason).toBe("project_unreadable");
       expect(printed.error.message).toContain("rinth whoami");
     });
+  });
+});
+
+describe("rinth servers install-mrpack", () => {
+  test("uploads the named pack and reports success", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rinth-mrpack-"));
+    const path = join(dir, "sickos-1.2.3.mrpack");
+    writeFileSync(path, "pack bytes");
+    let received: { serverId: string; name: string; size: number } | undefined;
+    const transport = createFakeTransport({
+      onInstallMrpack(serverId, file) {
+        received = { serverId, name: file.name, size: file.data.length };
+      },
+    });
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const code = await run(["--json", "servers", "install-mrpack", "srv_123", "--file", path], { transport });
+      expect(code).toBe(ExitCode.Ok);
+      expect(received).toEqual({ serverId: "srv_123", name: "sickos-1.2.3.mrpack", size: 10 });
+      expect(JSON.parse(String(logSpy.mock.calls[0]?.[0]))).toEqual({
+        id: "srv_123",
+        file: "sickos-1.2.3.mrpack",
+        installed: true,
+      });
+    } finally {
+      logSpy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a missing pack before transport", async () => {
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+    const code = await run(["servers", "install-mrpack", "srv_123", "--file", "/missing/file.mrpack"], {
+      transport: createFakeTransport(),
+    });
+    expect(code).toBe(ExitCode.Usage);
+    errSpy.mockRestore();
   });
 });
 

@@ -29,6 +29,8 @@ export interface FakeTransportFixtures {
   serverError?: CliError;
   powerError?: CliError;
   setUpstreamError?: CliError;
+  installMrpackError?: CliError;
+  onInstallMrpack?: (serverId: string, file: CreateVersionFile) => void;
   /** The id `resolveProjectId` returns; defaults to echoing the input unresolved. */
   resolveProjectId?: string;
   resolveProjectIdError?: CliError;
@@ -120,6 +122,13 @@ export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Trans
     async setUpstream(_serverId: string, _projectId: string, _versionId: string) {
       if (fixtures.setUpstreamError) {
         throw fixtures.setUpstreamError;
+      }
+    },
+
+    async installMrpack(serverId: string, file: CreateVersionFile) {
+      fixtures.onInstallMrpack?.(serverId, file);
+      if (fixtures.installMrpackError) {
+        throw fixtures.installMrpackError;
       }
     },
 

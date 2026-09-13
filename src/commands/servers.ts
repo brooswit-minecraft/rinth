@@ -1,4 +1,6 @@
 import type { Archon } from "@modrinth/api-client";
+import { basename } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import type { PowerAction, ServerDetail } from "../client/index.ts";
 import { diagnoseNotFound, diagnoseServerCredentialRefused, diagnoseUpstreamRouteDead } from "../diagnose.ts";
 import { CliError, ExitCode } from "../errors.ts";
@@ -31,7 +33,7 @@ async function powerDiagnosed(id: string, action: PowerAction, ctx: CommandConte
 }
 
 const TOP_USAGE =
-  "Usage: rinth servers list | get <id> | power <id> start|stop|restart|kill | upstream <id> --project <slug|id> --version <version_id> [--restart] | exec <id> [--wait <ms>] <command...>";
+  "Usage: rinth servers list | get <id> | power <id> start|stop|restart|kill | upstream <id> --project <slug|id> --version <version_id> [--restart] | install-mrpack <id> --file <path> | exec <id> [--wait <ms>] <command...>";
 
 async function list(ctx: CommandContext): Promise<number> {
   const servers = await ctx.transport.listServers();
@@ -202,6 +204,28 @@ async function upstream(args: string[], ctx: CommandContext): Promise<number> {
   return ExitCode.Ok;
 }
 
+const INSTALL_MRPACK_USAGE = "Usage: rinth servers install-mrpack <id> --file <path>";
+
+async function installMrpack(args: string[], ctx: CommandContext): Promise<number> {
+  const [id, flag, path] = args;
+  if (!id || flag !== "--file" || !path || args.length !== 3) {
+    throw new CliError(INSTALL_MRPACK_USAGE, ExitCode.Usage);
+  }
+  if (!path.endsWith(".mrpack") || !existsSync(path)) {
+    throw new CliError(`.mrpack file not found: ${path}`, ExitCode.Usage);
+  }
+
+  const bytes = new Uint8Array(readFileSync(path));
+  await ctx.transport.installMrpack(id, { name: basename(path), data: bytes });
+
+  if (ctx.json) {
+    printJson({ id, file: basename(path), installed: true });
+  } else {
+    printHuman(`Installed ${basename(path)} on ${id}.`);
+  }
+  return ExitCode.Ok;
+}
+
 const EXEC_USAGE = "Usage: rinth servers exec <id> [--wait <ms>] <command...>";
 
 /** How long to wait for `auth-ok`/`auth-incorrect` after the socket opens before treating it as an auth failure. */
@@ -350,6 +374,7 @@ function usageFor(args: string[]): string {
   if (sub === "get") return GET_USAGE;
   if (sub === "power") return POWER_USAGE;
   if (sub === "upstream") return UPSTREAM_USAGE;
+  if (sub === "install-mrpack") return INSTALL_MRPACK_USAGE;
   if (sub === "exec") return EXEC_USAGE;
   return TOP_USAGE;
 }
@@ -374,6 +399,9 @@ export const serversCommand: Command = {
     }
     if (sub === "upstream") {
       return upstream(rest, ctx);
+    }
+    if (sub === "install-mrpack") {
+      return installMrpack(rest, ctx);
     }
     if (sub === "exec") {
       return exec(rest, ctx);

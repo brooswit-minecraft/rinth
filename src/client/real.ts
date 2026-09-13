@@ -333,6 +333,27 @@ export function createRealTransport(): Transport {
         });
       }, `POST /v1/servers/${serverId}/worlds/:world_id/content`),
 
+    installMrpack: (serverId: string, file: CreateVersionFile) =>
+      call(async () => {
+        const auth = await client.archon.servers_v0.getReinstallMrpackAuth(serverId);
+        const formData = new FormData();
+        formData.append("file", new Blob([file.data]), file.name);
+        const url = new URL(`https://${auth.url}/reinstallMrpackMultiparted`);
+        url.searchParams.set("hard", "false");
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${auth.token}` },
+          body: formData,
+        });
+        if (!response.ok) {
+          const detail = await response.text().catch(() => "");
+          throw new ModrinthApiError(detail || response.statusText, {
+            statusCode: response.status,
+            responseData: detail,
+          });
+        }
+      }, `POST /modrinth/v0/servers/${serverId}/reinstallFromMrpack`),
+
     // Labrinth's `GET /project/:idOrSlug` accepts a project id OR its slug
     // interchangeably and returns the same `Project` shape either way, so
     // there is no need to guess whether `projectIdOrSlug` is already an id

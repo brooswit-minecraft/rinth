@@ -542,6 +542,39 @@ describe("createRealTransport", () => {
       expect((caught as CliError).exitCode).toBe(ExitCode.ApiError);
     });
 
+    test("installMrpack gets upload auth then posts multipart bytes to the hosting node", async () => {
+      const requests: Array<{ url: string; method: string; authorization: string | null }> = [];
+      let request = 0;
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input, init) => {
+        requests.push({
+          url: String(input),
+          method: init?.method ?? "GET",
+          authorization: new Headers(init?.headers).get("authorization"),
+        });
+        request++;
+        if (request === 1) {
+          return new Response(JSON.stringify({ url: "node.example.test/upload", token: "short-lived" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(null, { status: 204 });
+      }) as typeof fetch);
+
+      const transport = createRealTransport();
+      await expect(
+        transport.installMrpack("srv_123", { name: "sickos.mrpack", data: new Uint8Array([1, 2, 3]) }),
+      ).resolves.toBeUndefined();
+      fetchSpy.mockRestore();
+
+      expect(requests).toHaveLength(2);
+      expect(requests[1]).toEqual({
+        url: "https://node.example.test/upload/reinstallMrpackMultiparted?hard=false",
+        method: "POST",
+        authorization: "Bearer short-lived",
+      });
+    });
+
     test("resolveProjectId resolves the project id from a labrinth project lookup, by slug or id", async () => {
       const PROJECT: Labrinth.Projects.v2.Project = {
         id: "AABBCCDD",
