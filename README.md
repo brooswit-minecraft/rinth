@@ -4,7 +4,7 @@ A Modrinth CLI (servers management + publish) wrapping [`@modrinth/api-client`](
 One tested surface usable both by a human at a shell and by CI — there is no
 official Modrinth CLI.
 
-Status: v0.9.1. Full command surface: `whoami`; `servers
+Status: v0.10.0. Full command surface: `whoami`; `servers
 list|get|power|upstream|refresh-runtime|startup|install-mrpack|exec`;
 `versions list|latest|delete`; `publish`;
 `project get|create|submit|edit|icon`. See "Known gaps / follow-ups" below
@@ -16,7 +16,7 @@ Pin to a released tag — **not** a branch — so a consumer's install can't
 silently change under them:
 
 ```sh
-bunx --bun github:brooswit-minecraft/rinth#v0.9.1 --help
+bunx --bun github:brooswit-minecraft/rinth#v0.10.0 --help
 ```
 
 The `--bun` flag is required: it tells `bunx` to run the package's `bin`
@@ -30,7 +30,7 @@ TypeScript source under bun.
 - uses: oven-sh/setup-bun@v2
   with:
     bun-version: latest
-- run: bunx --bun github:brooswit-minecraft/rinth#v0.9.1 versions latest sodium --loader fabric --json
+- run: bunx --bun github:brooswit-minecraft/rinth#v0.10.0 versions latest sodium --loader fabric --json
   env:
     MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
 ```
@@ -99,7 +99,7 @@ The package left on disk was still `0.8.0`. Remove first:
 
 ```sh
 bun remove -g @brooswit/rinth   # confirm the manifest entry and ~/.bun/bin/rinth are gone
-bun install -g "github:brooswit-minecraft/rinth#v0.9.1"
+bun install -g "github:brooswit-minecraft/rinth#v0.10.0"
 ```
 
 **And check a version-distinguishing flag, not just `--help`.** The two
@@ -135,7 +135,7 @@ unchanged. The commands show the version to install today.
 
 ```sh
 export PATH="$HOME/.bun/bin:$PATH"   # only needed for this one-off install command
-bun install -g "github:brooswit-minecraft/rinth#v0.9.1"
+bun install -g "github:brooswit-minecraft/rinth#v0.10.0"
 ```
 
 This resolves the named annotated tag (never a branch) and drops a `rinth` shim, a symlink to the
@@ -203,7 +203,7 @@ so this install was performed and verified by the `booswrit` account
 directly, on that box, using the identical mechanism and tag:
 
 ```sh
-bun install -g "github:brooswit-minecraft/rinth#v0.9.1"
+bun install -g "github:brooswit-minecraft/rinth#v0.10.0"
 ```
 
 ```
@@ -215,7 +215,7 @@ Pinned to the same tag, recorded literally in
 `~/.bun/install/global/package.json`:
 
 ```json
-{ "dependencies": { "@brooswit/rinth": "github:brooswit-minecraft/rinth#v0.9.1" } }
+{ "dependencies": { "@brooswit/rinth": "github:brooswit-minecraft/rinth#v0.10.0" } }
 ```
 
 PATH persistence needed the same fish fix (`fish_user_paths` was empty on

@@ -9,6 +9,10 @@ enforces that this file has a `## [<version>]` heading matching the
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.10.0] - 2026-09-13
+
 This docs-and-messages change touches no API, flag, route, reason-string,
 or exit code. `servers upstream`'s diagnosis messages
 (`servers_upstream_route_dead`, `servers_credential_refused`) and this
