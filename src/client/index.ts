@@ -179,6 +179,11 @@ export interface CreateProjectIconFile {
   data: Uint8Array;
 }
 
+export interface ServerStartupCommand {
+  worldId: string;
+  command: string;
+}
+
 export interface Transport {
   /** GET labrinth `/user` (v2) — the authenticated user. */
   getCurrentUser(): Promise<Labrinth.Users.v2.User>;
@@ -192,6 +197,8 @@ export interface Transport {
   setUpstream(serverId: string, projectId: string, versionId: string): Promise<void>;
   /** Reinstall the active world's current bare runtime through Archon's v1 content lifecycle. */
   refreshRuntime(serverId: string): Promise<void>;
+  /** Set and verify the active world's startup command through Archon's v1 options API. */
+  setStartupCommand(serverId: string, command: string): Promise<ServerStartupCommand>;
   /** Reinstall a hosted server from an uploaded .mrpack through Archon's two-step upload flow. */
   installMrpack(serverId: string, file: CreateVersionFile): Promise<void>;
   /** Resolve a project slug or id to its canonical id via labrinth `GET /project/:idOrSlug`. */

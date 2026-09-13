@@ -67,6 +67,11 @@ it's recorded now rather than left permanently missing from the record.
 
 ### Added
 
+- `rinth servers startup <server-id> --command <command>` manages the active
+  hosted world's startup command through Archon v1 using the existing PAT.
+  It resolves the active world (falling back to the first), PATCHes only the
+  sparse `startup_command` field so other runtime options remain unchanged,
+  and verifies the stored command with a GET readback before succeeding.
 - `--help`/`-h` now routes to usage text specific to what preceded it on
   the command line — top-level, command group, and (where a group's own
   usage is already split per subcommand, e.g. `project`, `servers`) the

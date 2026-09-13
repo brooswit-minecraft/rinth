@@ -51,6 +51,7 @@ import {
   type PowerAction,
   type PublicServer,
   type ServerDetail,
+  type ServerStartupCommand,
   type Transport,
   type VersionFilters,
 } from "./index.ts";
@@ -353,6 +354,31 @@ export function createRealTransport(): Transport {
           soft_override: true,
         });
       }, `POST /v1/servers/${serverId}/worlds/:world_id/content`),
+
+    setStartupCommand: async (serverId: string, command: string): Promise<ServerStartupCommand> => {
+      const servers = await call(() => client.archon.servers_v1.list(), "GET /v1/servers");
+      const server = servers.find((candidate) => candidate.id === serverId);
+      const world = server?.worlds.find((candidate) => candidate.is_active) ?? server?.worlds[0];
+      if (!world) {
+        throw new CliError(`Server ${serverId} has no configurable world`, ExitCode.NotFound);
+      }
+
+      const endpoint = `/v1/servers/${serverId}/worlds/${world.id}/options/startup`;
+      await call(
+        () => client.archon.options_v1.patchStartup(serverId, world.id, { startup_command: command }),
+        `PATCH ${endpoint}`,
+      );
+      const startup = await call(() => client.archon.options_v1.getStartup(serverId, world.id), `GET ${endpoint}`);
+      if (startup.startup_command !== command) {
+        throw new CliError(
+          `Startup command verification failed for server ${serverId} world ${world.id}`,
+          ExitCode.ApiError,
+          { endpoint: `GET ${endpoint}` },
+        );
+      }
+
+      return { worldId: world.id, command: startup.startup_command };
+    },
 
     installMrpack: (serverId: string, file: CreateVersionFile) =>
       call(async () => {

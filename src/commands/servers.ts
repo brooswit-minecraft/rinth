@@ -33,7 +33,7 @@ async function powerDiagnosed(id: string, action: PowerAction, ctx: CommandConte
 }
 
 const TOP_USAGE =
-  "Usage: rinth servers list | get <id> | power <id> start|stop|restart|kill | upstream <id> --project <slug|id> --version <version_id> [--restart] | refresh-runtime <id> | install-mrpack <id> --file <path> | exec <id> [--wait <ms>] <command...>";
+  "Usage: rinth servers list | get <id> | power <id> start|stop|restart|kill | upstream <id> --project <slug|id> --version <version_id> [--restart] | refresh-runtime <id> | startup <id> --command <command> | install-mrpack <id> --file <path> | exec <id> [--wait <ms>] <command...>";
 
 async function list(ctx: CommandContext): Promise<number> {
   const servers = await ctx.transport.listServers();
@@ -224,6 +224,23 @@ async function refreshRuntime(args: string[], ctx: CommandContext): Promise<numb
   return ExitCode.Ok;
 }
 
+const STARTUP_USAGE = "Usage: rinth servers startup <id> --command <command>";
+
+async function startup(args: string[], ctx: CommandContext): Promise<number> {
+  const [id, flag, command] = args;
+  if (!id || flag !== "--command" || !command || args.length !== 3) {
+    throw new CliError(STARTUP_USAGE, ExitCode.Usage);
+  }
+
+  const result = await ctx.transport.setStartupCommand(id, command);
+  if (ctx.json) {
+    printJson({ id, world_id: result.worldId, startup_command: result.command, verified: true });
+  } else {
+    printHuman(`Startup command set on ${id} (${result.worldId}): ${result.command}`);
+  }
+  return ExitCode.Ok;
+}
+
 async function installMrpack(args: string[], ctx: CommandContext): Promise<number> {
   const [id, flag, path] = args;
   if (!id || flag !== "--file" || !path || args.length !== 3) {
@@ -393,6 +410,7 @@ function usageFor(args: string[]): string {
   if (sub === "power") return POWER_USAGE;
   if (sub === "upstream") return UPSTREAM_USAGE;
   if (sub === "refresh-runtime") return REFRESH_RUNTIME_USAGE;
+  if (sub === "startup") return STARTUP_USAGE;
   if (sub === "install-mrpack") return INSTALL_MRPACK_USAGE;
   if (sub === "exec") return EXEC_USAGE;
   return TOP_USAGE;
@@ -421,6 +439,9 @@ export const serversCommand: Command = {
     }
     if (sub === "refresh-runtime") {
       return refreshRuntime(rest, ctx);
+    }
+    if (sub === "startup") {
+      return startup(rest, ctx);
     }
     if (sub === "install-mrpack") {
       return installMrpack(rest, ctx);

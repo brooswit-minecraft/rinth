@@ -634,6 +634,127 @@ describe("createRealTransport", () => {
       ]);
     });
 
+    test("setStartupCommand patches only startup_command on the active world and verifies readback", async () => {
+      const requests: Array<{ url: string; method: string; authorization: string | null; body: unknown }> = [];
+      let request = 0;
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input, init) => {
+        requests.push({
+          url: String(input),
+          method: init?.method ?? "GET",
+          authorization: new Headers(init?.headers).get("authorization"),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        request++;
+        if (request === 1) {
+          return new Response(
+            JSON.stringify([
+              {
+                id: "srv_123",
+                worlds: [
+                  { id: "world_first", is_active: false },
+                  { id: "world_active", is_active: true },
+                ],
+              },
+            ]),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (request === 2) return new Response(null, { status: 204 });
+        return new Response(
+          JSON.stringify({
+            java_version: 21,
+            jre_vendor: "temurin",
+            original_invocation: "java @user_jvm_args.txt",
+            startup_command: "./restart-on-exit.sh",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }) as typeof fetch);
+
+      const result = await createRealTransport().setStartupCommand("srv_123", "./restart-on-exit.sh");
+      fetchSpy.mockRestore();
+
+      expect(result).toEqual({ worldId: "world_active", command: "./restart-on-exit.sh" });
+      expect(requests).toHaveLength(3);
+      expect(requests.every((item) => item.authorization === "Bearer unit-test-real-transport-token")).toBe(true);
+      expect(requests[1]).toMatchObject({
+        method: "PATCH",
+        body: { startup_command: "./restart-on-exit.sh" },
+      });
+      expect(requests[1]?.url).toContain("/v1/servers/srv_123/worlds/world_active/options/startup");
+      expect(requests[2]?.method).toBe("GET");
+      expect(requests[2]?.url).toContain("/v1/servers/srv_123/worlds/world_active/options/startup");
+    });
+
+    test("setStartupCommand fails when GET readback does not match", async () => {
+      let request = 0;
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => {
+        request++;
+        if (request === 1) {
+          return new Response(JSON.stringify([{ id: "srv_123", worlds: [{ id: "world_1", is_active: true }] }]), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (request === 2) return new Response(null, { status: 204 });
+        return new Response(
+          JSON.stringify({
+            java_version: 21,
+            jre_vendor: "temurin",
+            original_invocation: null,
+            startup_command: "java -jar server.jar",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }) as unknown as typeof fetch);
+
+      let caught: unknown;
+      try {
+        await createRealTransport().setStartupCommand("srv_123", "./restart-on-exit.sh");
+      } catch (error) {
+        caught = error;
+      }
+      fetchSpy.mockRestore();
+
+      expect(caught).toBeInstanceOf(CliError);
+      expect((caught as CliError).exitCode).toBe(ExitCode.ApiError);
+      expect((caught as CliError).endpoint).toBe("GET /v1/servers/srv_123/worlds/world_1/options/startup");
+    });
+
+    test("setStartupCommand falls back to the first world when none is active", async () => {
+      const urls: string[] = [];
+      let request = 0;
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: Parameters<typeof fetch>[0]) => {
+        urls.push(String(input));
+        request++;
+        if (request === 1) {
+          return new Response(
+            JSON.stringify([{ id: "srv_123", worlds: [{ id: "world_first", is_active: false }] }]),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (request === 2) return new Response(null, { status: 204 });
+        return new Response(
+          JSON.stringify({
+            java_version: null,
+            jre_vendor: null,
+            original_invocation: null,
+            startup_command: "java -jar server.jar",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }) as unknown as typeof fetch);
+
+      await expect(createRealTransport().setStartupCommand("srv_123", "java -jar server.jar")).resolves.toEqual({
+        worldId: "world_first",
+        command: "java -jar server.jar",
+      });
+      fetchSpy.mockRestore();
+
+      expect(urls[1]).toContain("/worlds/world_first/options/startup");
+      expect(urls[2]).toContain("/worlds/world_first/options/startup");
+    });
+
     test("installMrpack gets upload auth then posts multipart bytes to the hosting node", async () => {
       const requests: Array<{ url: string; method: string; authorization: string | null }> = [];
       let request = 0;

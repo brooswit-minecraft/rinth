@@ -5,7 +5,8 @@ One tested surface usable both by a human at a shell and by CI — there is no
 official Modrinth CLI.
 
 Status: v0.9.1. Full command surface: `whoami`; `servers
-list|get|power|upstream|exec`; `versions list|latest|delete`; `publish`;
+list|get|power|upstream|refresh-runtime|startup|install-mrpack|exec`;
+`versions list|latest|delete`; `publish`;
 `project get|create|submit|edit|icon`. See "Known gaps / follow-ups" below
 for what still doesn't work against the live API.
 
@@ -772,6 +773,31 @@ This 404 and these 403s no longer reach a caller as bare API strings: see
 gaps / follow-ups" for the production evidence (sickos run `33322343392`)
 that this is a live, ongoing breakage for a real caller, not just this
 research.
+
+### `rinth servers startup <id> --command <command>`
+
+Sets the active hosted world's startup command through the Archon v1 options
+API. The command resolves the active world from `GET /v1/servers` (falling
+back to the first world when none is marked active), sends a sparse PATCH
+containing only `startup_command`, and reads the options back before reporting
+success. Existing Java version and JRE vendor settings are therefore left
+untouched. Quote commands containing spaces:
+
+```sh
+rinth --json servers startup ff783f0f-ec3c-4037-b39f-452ce590891d \
+  --command './restart-on-exit.sh java @user_jvm_args.txt'
+```
+
+**JSON shape**:
+
+```json
+{
+  "id": "ff783f0f-ec3c-4037-b39f-452ce590891d",
+  "world_id": "...",
+  "startup_command": "./restart-on-exit.sh java @user_jvm_args.txt",
+  "verified": true
+}
+```
 
 ### `rinth servers exec <id> <command...>`
 

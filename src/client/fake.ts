@@ -16,6 +16,7 @@ import type {
   PowerAction,
   PublicServer,
   ServerDetail,
+  ServerStartupCommand,
   Transport,
   VersionFilters,
 } from "./index.ts";
@@ -31,6 +32,9 @@ export interface FakeTransportFixtures {
   setUpstreamError?: CliError;
   refreshRuntimeError?: CliError;
   onRefreshRuntime?: (serverId: string) => void;
+  startupCommand?: ServerStartupCommand;
+  startupCommandError?: CliError;
+  onSetStartupCommand?: (serverId: string, command: string) => void;
   installMrpackError?: CliError;
   onInstallMrpack?: (serverId: string, file: CreateVersionFile) => void;
   /** The id `resolveProjectId` returns; defaults to echoing the input unresolved. */
@@ -132,6 +136,14 @@ export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Trans
       if (fixtures.refreshRuntimeError) {
         throw fixtures.refreshRuntimeError;
       }
+    },
+
+    async setStartupCommand(serverId: string, command: string) {
+      fixtures.onSetStartupCommand?.(serverId, command);
+      if (fixtures.startupCommandError) {
+        throw fixtures.startupCommandError;
+      }
+      return fixtures.startupCommand ?? { worldId: "world_1", command };
     },
 
     async installMrpack(serverId: string, file: CreateVersionFile) {

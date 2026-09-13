@@ -624,6 +624,49 @@ describe("rinth servers refresh-runtime", () => {
   });
 });
 
+describe("rinth servers startup", () => {
+  test("sets the command and prints the verified active-world result", async () => {
+    let received: { serverId: string; command: string } | undefined;
+    const transport = createFakeTransport({
+      startupCommand: { worldId: "world_active", command: "./restart-on-exit.sh" },
+      onSetStartupCommand(serverId, command) {
+        received = { serverId, command };
+      },
+    });
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+
+    const code = await run(
+      ["--json", "servers", "startup", "srv_123", "--command", "./restart-on-exit.sh"],
+      { transport },
+    );
+
+    expect(code).toBe(ExitCode.Ok);
+    expect(received).toEqual({ serverId: "srv_123", command: "./restart-on-exit.sh" });
+    expect(JSON.parse(String(logSpy.mock.calls[0]?.[0]))).toEqual({
+      id: "srv_123",
+      world_id: "world_active",
+      startup_command: "./restart-on-exit.sh",
+      verified: true,
+    });
+    logSpy.mockRestore();
+  });
+
+  test("rejects malformed arguments before transport", async () => {
+    let called = false;
+    const transport = createFakeTransport({ onSetStartupCommand: () => (called = true) });
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+
+    expect(await run(["servers", "startup"], { transport })).toBe(ExitCode.Usage);
+    expect(await run(["servers", "startup", "srv_123", "--command"], { transport })).toBe(ExitCode.Usage);
+    expect(await run(["servers", "startup", "srv_123", "--bad", "java"], { transport })).toBe(ExitCode.Usage);
+    expect(await run(["servers", "startup", "srv_123", "--command", "java", "extra"], { transport })).toBe(
+      ExitCode.Usage,
+    );
+    expect(called).toBe(false);
+    errSpy.mockRestore();
+  });
+});
+
 describe("rinth servers exec", () => {
   afterEach(() => {
     resetSecretsForTesting();
