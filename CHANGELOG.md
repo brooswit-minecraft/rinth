@@ -16,12 +16,11 @@ Nothing yet.
 > **Correction (2026-09-29):** This section's opening sentence originally
 > read "This docs-and-messages change touches no API, flag, route,
 > reason-string, or exit code." That sentence is false of this section:
-> the section below documents two additions (### Added) —
-> the `rinth --version` flag and the `rinth help [<command>
-> [<subcommand>]]` command — and one behaviour change (### Changed) to
-> `ICON_CONTENT_TYPES` under which a caller passing `.svg`/`.svgz`/`.rgb`
-> now gets a new local exit code (`2`) instead of the prior remote-API
-> failure. The sentence below is struck through and replaced with an
+> the `### Added`/`### Changed` headings below record new flags, new
+> commands, and behaviour changes. See those headings for the complete,
+> authoritative list — this note deliberately does not re-enumerate or
+> count them, to avoid becoming a second, driftable copy of the same
+> claim. The sentence below is struck through and replaced with an
 > accurate one; nothing else in this section has been changed. This
 > correction lives only here, on `main` — this repo never re-points a
 > published tag, so the `v0.10.0` git tag's own frozen copy of this file
@@ -29,12 +28,10 @@ Nothing yet.
 > (`git show v0.10.0:CHANGELOG.md`), and always will.
 
 ~~This docs-and-messages change touches no API, flag, route, reason-string,
-or exit code.~~ This docs-and-messages change touches no route,
-reason-string, or previously-existing exit code — but it does add a new
-flag (`rinth --version`), a new command (`rinth help`), and one behaviour
-change (`ICON_CONTENT_TYPES`, see ### Changed below) that gives icon
-uploads a new local exit code for three extensions the server never
-accepted anyway. `servers upstream`'s diagnosis messages
+or exit code.~~ This change adds new flags and commands and includes
+behaviour changes — see `### Added`/`### Changed` below for the complete
+list — so it is not accurate to call it docs-and-messages-only.
+`servers upstream`'s diagnosis messages
 (`servers_upstream_route_dead`, `servers_credential_refused`) and this
 README's account of the same topic previously stated more than the
 evidence supports on two separate points: that a v1 content-API migration
