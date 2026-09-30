@@ -13,8 +13,25 @@ Nothing yet.
 
 ## [0.10.0] - 2026-09-13
 
-This docs-and-messages change touches no API, flag, route, reason-string,
-or exit code. `servers upstream`'s diagnosis messages
+> **Correction (2026-09-29):** This section's opening sentence originally
+> read "This docs-and-messages change touches no API, flag, route,
+> reason-string, or exit code." That sentence is false of this section:
+> the `### Added`/`### Changed` headings below record new flags, new
+> commands, and behaviour changes. See those headings for the complete,
+> authoritative list — this note deliberately does not re-enumerate or
+> count them, to avoid becoming a second, driftable copy of the same
+> claim. The sentence below is struck through and replaced with an
+> accurate one; nothing else in this section has been changed. This
+> correction lives only here, on `main` — this repo never re-points a
+> published tag, so the `v0.10.0` git tag's own frozen copy of this file
+> still carries the original, uncorrected sentence
+> (`git show v0.10.0:CHANGELOG.md`), and always will.
+
+~~This docs-and-messages change touches no API, flag, route, reason-string,
+or exit code.~~ This change adds new flags and commands and includes
+behaviour changes — see `### Added`/`### Changed` below for the complete
+list — so it is not accurate to call it docs-and-messages-only.
+`servers upstream`'s diagnosis messages
 (`servers_upstream_route_dead`, `servers_credential_refused`) and this
 README's account of the same topic previously stated more than the
 evidence supports on two separate points: that a v1 content-API migration
