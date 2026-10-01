@@ -341,7 +341,7 @@ rinth servers list
 
 ### Authentication — what a token can and cannot do
 
-Verified against the `modrinth/code` frontend/backend @ `0ab9100` and
+Verified against the `modrinth/code` frontend/backend @ `0ab9100c46b27fae450ba84b1e0c92c7dc9a8bc2` and
 `@modrinth/api-client` 0.60.0 (source: KAN-714 comments 14588/14622):
 
 - A labrinth PAT (`mrp_...`) **works** for every labrinth route this CLI
@@ -980,7 +980,7 @@ Uploads a project icon: `PATCH
 https://api.modrinth.com/v2/project/{idOrSlug}/icon?ext=<ext>` with the
 **raw image bytes** as the request body (not multipart). **Confirmed from
 labrinth's published server source** —
-[`apps/labrinth/src/routes/v3/projects.rs:2076`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/routes/v3/projects.rs#L2076)'s
+[`apps/labrinth/src/routes/v3/projects.rs:2076`](https://github.com/modrinth/code/blob/0ab9100c46b27fae450ba84b1e0c92c7dc9a8bc2/apps/labrinth/src/routes/v3/projects.rs#L2076)'s
 `#[patch("/{id}/icon")] pub async fn project_icon_edit(web::Query(ext):
 web::Query<Extension>, ..., payload: web::Payload, ...)` — `ext` is a query
 param and the handler reads the body as a raw `web::Payload`, not a
@@ -1004,9 +1004,9 @@ extensions (and the `Content-Type` sent with each):
 
 **Reconciled against the server source, and the code now agrees with it.**
 labrinth's own extension→`Content-Type` mapping —
-[`apps/labrinth/src/util/ext.rs:3-11`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/util/ext.rs#L3-L11)'s
+[`apps/labrinth/src/util/ext.rs:3-11`](https://github.com/modrinth/code/blob/0ab9100c46b27fae450ba84b1e0c92c7dc9a8bc2/apps/labrinth/src/util/ext.rs#L3-L11)'s
 `get_image_content_type()`, the function
-[`apps/labrinth/src/util/img.rs:57`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/util/img.rs#L57)'s
+[`apps/labrinth/src/util/img.rs:57`](https://github.com/modrinth/code/blob/0ab9100c46b27fae450ba84b1e0c92c7dc9a8bc2/apps/labrinth/src/util/img.rs#L57)'s
 `upload_image_optimized()` calls to validate `ext` before ever touching the
 uploaded bytes — matches only `bmp`, `gif`, `jpeg`/`jpg`, `png`, and `webp`;
 anything else is rejected with `invalid format for image: <ext>` before
@@ -1024,7 +1024,7 @@ An unsupported extension is a usage error (exit 2) naming every extension
 missing or nonexistent `--file` is also a usage error (exit 2), matching
 `publish --file`. **Size cap,
 confirmed from the server source**:
-[`apps/labrinth/src/routes/v3/projects.rs:2172-2176`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/routes/v3/projects.rs#L2172-L2176)
+[`apps/labrinth/src/routes/v3/projects.rs:2172-2176`](https://github.com/modrinth/code/blob/0ab9100c46b27fae450ba84b1e0c92c7dc9a8bc2/apps/labrinth/src/routes/v3/projects.rs#L2172-L2176)
 reads the request body through `read_limited_from_payload(&mut payload,
 262144, "Icons must be smaller than 256KiB")` — a hard 262144-byte
 (256KiB) cap enforced server-side, matching what the live docs already
@@ -1214,7 +1214,7 @@ rinth project submit my-draft-mod
 
 **Submittable statuses**: `draft` and `rejected` (a rejected project can be
 fixed and resubmitted). Confirmed from labrinth's published server source —
-[`apps/labrinth/src/models/v3/projects.rs:559`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/models/v3/projects.rs#L559)'s
+[`apps/labrinth/src/models/v3/projects.rs:559`](https://github.com/modrinth/code/blob/0ab9100c46b27fae450ba84b1e0c92c7dc9a8bc2/apps/labrinth/src/models/v3/projects.rs#L559)'s
 `is_approved()`, which matches only `Approved|Archived|Unlisted|Private` —
 `Rejected` is not among them, so it passes the same non-approved guard a
 draft does — **not exercised live**, but this is server source, not an
@@ -1232,16 +1232,16 @@ document's `requested_status` enum (`approved|archived|unlisted|private|draft`)
 excludes `processing`, which looked like proof that `status` couldn't be set
 directly. Reading labrinth's actual server source corrected this: there are
 two independent branches in
-[`apps/labrinth/src/routes/v3/projects.rs`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/routes/v3/projects.rs).
+[`apps/labrinth/src/routes/v3/projects.rs`](https://github.com/modrinth/code/blob/0ab9100c46b27fae450ba84b1e0c92c7dc9a8bc2/apps/labrinth/src/routes/v3/projects.rs).
 The `requested_status` branch
-([line 801](https://github.com/modrinth/code/blob/main/apps/labrinth/src/routes/v3/projects.rs#L801))
+([line 801](https://github.com/modrinth/code/blob/0ab9100c46b27fae450ba84b1e0c92c7dc9a8bc2/apps/labrinth/src/routes/v3/projects.rs#L801))
 is validated against `can_be_requested()`
-([`apps/labrinth/src/models/v3/projects.rs:570`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/models/v3/projects.rs#L570)
+([`apps/labrinth/src/models/v3/projects.rs:570`](https://github.com/modrinth/code/blob/0ab9100c46b27fae450ba84b1e0c92c7dc9a8bc2/apps/labrinth/src/models/v3/projects.rs#L570)
 — the `ProjectStatus` overload; a distinct `VersionStatus` one exists at
 `:957`, not this one — which does exclude `processing`) and writes *only*
 that column, never touching `status`. `status` is validated by a separate
 permission check
-([line 581](https://github.com/modrinth/code/blob/main/apps/labrinth/src/routes/v3/projects.rs#L581)) —
+([line 581](https://github.com/modrinth/code/blob/0ab9100c46b27fae450ba84b1e0c92c7dc9a8bc2/apps/labrinth/src/routes/v3/projects.rs#L581)) —
 `!project.status.is_approved() && status == Processing` — that explicitly
 allows an ordinary, non-moderator user to set `Processing` on a project
 that isn't yet approved. That second branch is the one that actually
@@ -1256,7 +1256,7 @@ lean on that confirmation alone: it requires that `status` actually became
 from what it was before.
 
 **No-versions hazard, confirmed real and enforced as a pre-flight refusal**:
-[`apps/labrinth/src/routes/v3/projects.rs:616`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/routes/v3/projects.rs#L616)
+[`apps/labrinth/src/routes/v3/projects.rs:616`](https://github.com/modrinth/code/blob/0ab9100c46b27fae450ba84b1e0c92c7dc9a8bc2/apps/labrinth/src/routes/v3/projects.rs#L616)
 refuses exactly the draft/rejected -> `processing` transition this command
 performs when the project has no versions (`"Project submitted for review
 with no initial versions"`). Since this is the most likely real-world path
@@ -1778,10 +1778,10 @@ follow-ups"), so don't wire it into a real pipeline yet.
   `status`/`processing` PATCH mechanism, its `draft`+`rejected` submittable
   set, and its no-versions refusal are confirmed from labrinth's published
   server source at github.com/modrinth/code — specifically
-  [`apps/labrinth/src/routes/v3/projects.rs`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/routes/v3/projects.rs)
+  [`apps/labrinth/src/routes/v3/projects.rs`](https://github.com/modrinth/code/blob/0ab9100c46b27fae450ba84b1e0c92c7dc9a8bc2/apps/labrinth/src/routes/v3/projects.rs)
   (the `requested_status` branch, line 801; the `status` permission check,
   line 581; the no-versions refusal, line 616) and
-  [`apps/labrinth/src/models/v3/projects.rs`](https://github.com/modrinth/code/blob/main/apps/labrinth/src/models/v3/projects.rs)
+  [`apps/labrinth/src/models/v3/projects.rs`](https://github.com/modrinth/code/blob/0ab9100c46b27fae450ba84b1e0c92c7dc9a8bc2/apps/labrinth/src/models/v3/projects.rs)
   (`is_approved()`, line 559, for the submittable-status set;
   `can_be_requested()`, line 570 — the `ProjectStatus` overload, not the
   distinct `VersionStatus` one at `:957` — for the `requested_status`
