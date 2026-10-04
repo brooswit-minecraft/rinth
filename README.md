@@ -2084,6 +2084,17 @@ anywhere else (see `test/unit/cli.test.ts`).
   `MODRINTH_TOKEN` unset it prints an explicit `SERVERS V1 LIST PROBE: DID
   NOT RUN` line rather than skipping silently.
 
+- **Mutating probe** (`scripts/mutating-probe/`, MINECRAFT-34): one
+  `installContent` write against the real server, deliberately NOT part of
+  `test/` and never run by `test`, `test:integration` or any `pull_request`
+  job. It runs only via the `workflow_dispatch`-only
+  `.github/workflows/mutating-probe.yml` (from `main`, with the typed phrase
+  `MUTATE-PAID-SERVER`), or locally with `RINTH_MUTATING_PROBE=1`,
+  `RINTH_MUTATING_PROBE_CONFIRM=MUTATE-PAID-SERVER` and `MODRINTH_TOKEN`. It
+  captures the installed modpack first (aborting unrestorable), runs an
+  invalid-token control, writes once, reads back, restores, and prints
+  statuses/booleans only.
+
 ## Changelog / version gate
 
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)

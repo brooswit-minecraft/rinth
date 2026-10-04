@@ -1,0 +1,56 @@
+# MINECRAFT-34: the ONE human-authorized, MUTATING v1 installContent probe.
+#
+# SAFETY: this workflow is deliberately unreachable from ordinary CI.
+#   - Trigger is workflow_dispatch ONLY. There is no pull_request, push,
+#     schedule or workflow_call trigger, so a PR push cannot start it.
+#   - A typed confirmation input must equal the phrase below, or the job is
+#     skipped; the script re-checks it (and RINTH_MUTATING_PROBE=1) itself.
+#   - It only runs from main, so a branch carrying an edited probe cannot be
+#     dispatched with the org secret.
+#   - The probe lives in scripts/mutating-probe/, never in test/integration/,
+#     so `bun run test:integration` (ci.yml's pull_request job) cannot load it.
+name: mutating-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: >-
+          Type MUTATE-PAID-SERVER to authorize ONE mutating installContent
+          call against the real, paid Modrinth server (MINECRAFT-34).
+        required: true
+        type: string
+      target_version_id:
+        description: >-
+          Optional. Leave EMPTY to reinstall the version already installed
+          (least harm; the read-back then cannot prove a change). Set a
+          different version id only if you accept that the server is
+          re-pointed and then restored.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutating-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: probe
+    if: github.ref == 'refs/heads/main' && inputs.confirm == 'MUTATE-PAID-SERVER'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run probe:install-content
+        env:
+          RINTH_MUTATING_PROBE: "1"
+          RINTH_MUTATING_PROBE_CONFIRM: ${{ inputs.confirm }}
+          RINTH_PROBE_TARGET_VERSION_ID: ${{ inputs.target_version_id }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}

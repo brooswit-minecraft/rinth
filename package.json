@@ -13,7 +13,8 @@
     "test": "bun test test/unit",
     "test:integration": "bun test test/integration",
     "test:coverage": "bun test --coverage test/unit",
-    "changelog:check": "bun run scripts/check-changelog.ts"
+    "changelog:check": "bun run scripts/check-changelog.ts",
+    "probe:install-content": "bun run scripts/mutating-probe/run.ts"
   },
   "dependencies": {
     "@modrinth/api-client": "0.60.0"

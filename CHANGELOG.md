@@ -9,7 +9,15 @@ enforces that this file has a `## [<version>]` heading matching the
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- MINECRAFT-34: an OFF-by-default, single-shot mutating probe of
+  `client.archon.content_v1.installContent` (`scripts/mutating-probe/`,
+  `bun run probe:install-content`), reachable only through the
+  `workflow_dispatch`-only `.github/workflows/mutating-probe.yml` with a typed
+  confirmation. It is not under `test/`, so neither `test` nor
+  `test:integration` (nor any `pull_request` job) can load it. No CLI, flag,
+  route, reason-string or exit-code change.
 
 ## [0.10.0] - 2026-09-13
 
