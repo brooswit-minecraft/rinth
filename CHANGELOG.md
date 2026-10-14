@@ -96,6 +96,10 @@ it's recorded now rather than left permanently missing from the record.
 
 ### Added
 
+- `rinth servers list` and `rinth servers get` now expose safe, caller-useful
+  Archon server state: suspension reason, backup quota usage, notices, intro
+  flow state, and medal status/expiry. SFTP credentials, node tokens, owner
+  identity, and permission internals remain excluded from the allowlist.
 - `rinth servers startup <server-id> --command <command>` manages the active
   hosted world's startup command through Archon v1 using the existing PAT.
   It resolves the active world (falling back to the first), PATCHes only the

@@ -23,11 +23,18 @@ export interface PublicServer {
   id: string;
   name: string;
   status: Archon.Servers.v0.Status;
+  suspension_reason: Archon.Servers.v0.SuspensionReason | null;
   game: Archon.Servers.v0.Game;
   loader: Archon.Servers.v0.Loader | null;
   loader_version: string | null;
   mc_version: string | null;
   net: Archon.Servers.v0.Net;
+  backup_quota: number;
+  used_backup_quota: number;
+  notices: Archon.Servers.v0.Notice[];
+  flows: Archon.Servers.v0.Flows;
+  is_medal: boolean;
+  medal_expires?: string;
 }
 
 /**
