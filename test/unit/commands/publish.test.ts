@@ -8,6 +8,7 @@ import { apiError, createFakeTransport } from "../../../src/client/fake.ts";
 import type { CreateVersionFile, CreateVersionRequest } from "../../../src/client/index.ts";
 import { parsePublishFlags } from "../../../src/commands/publish.ts";
 import { ExitCode } from "../../../src/errors.ts";
+import { createHash } from "node:crypto";
 
 function fixtureProject(overrides: Partial<Labrinth.Projects.v2.Project> = {}): Labrinth.Projects.v2.Project {
   return {
@@ -52,7 +53,7 @@ function fixtureVersion(overrides: Partial<Labrinth.Versions.v2.Version> = {}): 
     downloads: 0,
     version_type: "release",
     status: "listed",
-    files: [],
+    files: [{ hashes: { sha1: "a", sha512: createHash("sha512").update("fake mrpack bytes").digest("hex") }, url: "https://example.com/pack.mrpack", filename: "pack.mrpack", primary: true, size: 17 }],
     dependencies: [],
     game_versions: [],
     loaders: [],
@@ -87,6 +88,7 @@ describe("parsePublishFlags", () => {
     expect(flags.loaders).toEqual([]);
     expect(flags.dependencies).toEqual([]);
     expect(flags.dryRun).toBe(false);
+    expect(flags.verifyExisting).toBe(false);
   });
 
   test("--name overrides the --version fallback", () => {
@@ -357,11 +359,11 @@ describe("rinth publish", () => {
     const code = await run(["publish", "sodium", "--file", mrpackPath, "--version", "1.0.0"], { transport });
 
     expect(code).toBe(ExitCode.Ok);
-    expect(logSpy).toHaveBeenCalledWith("v_new  https://modrinth.com/project/sodium/version/v_new");
+    expect(logSpy.mock.calls[0]?.[0]).toContain("published: proj_1 v_new pack.mrpack sha512=");
     logSpy.mockRestore();
   });
 
-  test("--json prints the created version object, unmodified", async () => {
+  test("--json prints stable publication identity", async () => {
     const logSpy = spyOn(console, "log").mockImplementation(() => {});
     const created = fixtureVersion({ id: "v_new" });
     const transport = createFakeTransport({ project: fixtureProject(), versions: [], createdVersion: created });
@@ -369,7 +371,12 @@ describe("rinth publish", () => {
     const code = await run(["--json", "publish", "sodium", "--file", mrpackPath, "--version", "1.0.0"], { transport });
 
     expect(code).toBe(ExitCode.Ok);
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(created));
+    expect(JSON.parse(String(logSpy.mock.calls[0]?.[0]))).toMatchObject({
+      outcome: "published",
+      project: { id: "proj_1", slug: "sodium" },
+      version: { id: "v_new", version_number: "1.0.0" },
+      file: { filename: "pack.mrpack" },
+    });
     logSpy.mockRestore();
   });
 
@@ -426,6 +433,41 @@ describe("rinth publish", () => {
       expect(message).toContain("1.0.0");
       expect(message).toContain("v_existing");
       expect(uploadAttempted).toBe(false);
+    });
+
+    test("--verify-existing safely retries an identical artifact and source revision without uploading", async () => {
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
+      let uploadAttempted = false;
+      const sha512 = createHash("sha512").update("fake mrpack bytes").digest("hex");
+      const transport = createFakeTransport({
+        project: fixtureProject(),
+        versions: [fixtureVersion({ id: "v_existing", changelog: "notes\n\nSource-Revision: abc123", files: [{ hashes: { sha1: "a", sha512 }, url: "u", filename: "pack.mrpack", primary: true, size: 17 }] })],
+        createdVersion: fixtureVersion(),
+        onCreateVersion: () => { uploadAttempted = true; },
+      });
+      const code = await run(["--json", "publish", "sodium", "--file", mrpackPath, "--version", "1.0.0", "--source-revision", "abc123", "--verify-existing"], { transport });
+      expect(code).toBe(ExitCode.Ok);
+      expect(uploadAttempted).toBe(false);
+      expect(JSON.parse(String(logSpy.mock.calls[0]?.[0]))).toMatchObject({ outcome: "verified_existing", file: { sha512 } });
+      logSpy.mockRestore();
+    });
+
+    test("--verify-existing classifies an artifact mismatch as a conflict", async () => {
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
+      const transport = createFakeTransport({ project: fixtureProject(), versions: [fixtureVersion({ files: [{ hashes: { sha1: "a", sha512: "wrong" }, url: "u", filename: "pack.mrpack", primary: true, size: 17 }] })] });
+      const code = await run(["--json", "publish", "sodium", "--file", mrpackPath, "--version", "1.0.0", "--verify-existing"], { transport });
+      expect(code).toBe(ExitCode.ApiError);
+      expect(String(errSpy.mock.calls[0]?.[0])).toContain("artifact_mismatch");
+      errSpy.mockRestore();
+    });
+
+    test("--verify-existing classifies a source revision mismatch as a conflict", async () => {
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
+      const transport = createFakeTransport({ project: fixtureProject(), versions: [fixtureVersion({ changelog: "Source-Revision: other" })] });
+      const code = await run(["--json", "publish", "sodium", "--file", mrpackPath, "--version", "1.0.0", "--source-revision", "abc123", "--verify-existing"], { transport });
+      expect(code).toBe(ExitCode.ApiError);
+      expect(String(errSpy.mock.calls[0]?.[0])).toContain("source_revision_mismatch");
+      errSpy.mockRestore();
     });
 
     test("no matching version_number proceeds to upload", async () => {
@@ -571,6 +613,17 @@ describe("rinth publish", () => {
       errSpy.mockRestore();
 
       expect(code).toBe(ExitCode.AuthMissing);
+    });
+
+    test("a failed identity read-back is distinguishable and does not report publication", async () => {
+      const errSpy = spyOn(console, "error").mockImplementation(() => {});
+      const transport = createFakeTransport({
+        project: fixtureProject(), versions: [], createdVersion: fixtureVersion({ id: "v_new" }),
+        versionError: apiError(ExitCode.Network),
+      });
+      const code = await run(["publish", "sodium", "--file", mrpackPath, "--version", "1.0.0"], { transport });
+      errSpy.mockRestore();
+      expect(code).toBe(ExitCode.Network);
     });
   });
 });
