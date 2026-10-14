@@ -226,10 +226,13 @@ export function createFakeTransport(fixtures: FakeTransportFixtures = {}): Trans
       if (fixtures.versionError) {
         throw typeof fixtures.versionError === "function" ? fixtures.versionError() : fixtures.versionError;
       }
-      if (!fixtures.version) {
+      if (!fixtures.version && !fixtures.createdVersion) {
         throw new Error("createFakeTransport: no `version` fixture provided");
       }
-      return typeof fixtures.version === "function" ? fixtures.version() : fixtures.version;
+      if (fixtures.version) {
+        return typeof fixtures.version === "function" ? fixtures.version() : fixtures.version;
+      }
+      return fixtures.createdVersion!;
     },
 
     async deleteVersion(id) {
