@@ -618,11 +618,18 @@ node panel token from the Archon response are never included:
       "id": "...",
       "name": "...",
       "status": "available",
+      "suspension_reason": null,
       "game": "Minecraft",
       "loader": "Paper",
       "loader_version": "...",
       "mc_version": "1.20.4",
-      "net": { "ip": null, "port": 25565, "domain": "..." }
+      "net": { "ip": null, "port": 25565, "domain": "..." },
+      "backup_quota": 5,
+      "used_backup_quota": 1,
+      "notices": [],
+      "flows": { "intro": false },
+      "is_medal": false,
+      "medal_expires": "2026-12-31T00:00:00Z"
     }
   ]
 }
@@ -630,8 +637,9 @@ node panel token from the Archon response are never included:
 
 ### `rinth servers get <id>`
 
-Server details via `archon.servers_v0.get()`: name, status, game version,
-loader + version, current upstream, net/datacenter.
+Server details via `archon.servers_v0.get()`: name, status, suspension reason,
+game version, loader + version, backup quota usage, notices, intro flow, medal
+status/expiry, current upstream, net/datacenter.
 
 ```sh
 rinth servers get ff783f0f-ec3c-4037-b39f-452ce590891d
@@ -646,11 +654,18 @@ never included:
   "id": "ff783f0f-ec3c-4037-b39f-452ce590891d",
   "name": "...",
   "status": "available",
+  "suspension_reason": null,
   "game": "Minecraft",
   "loader": "Paper",
   "loader_version": "...",
   "mc_version": "1.20.4",
   "net": { "ip": null, "port": 25565, "domain": "..." },
+  "backup_quota": 5,
+  "used_backup_quota": 1,
+  "notices": [],
+  "flows": { "intro": false },
+  "is_medal": false,
+  "medal_expires": "2026-12-31T00:00:00Z",
   "datacenter": "...",
   "upstream": { "kind": "modpack", "project_id": "...", "version_id": "..." }
 }

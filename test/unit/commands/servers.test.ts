@@ -19,11 +19,17 @@ const FIXTURE_SERVER: PublicServer = {
   id: "srv_123",
   name: "My Server",
   status: "available",
+  suspension_reason: null,
   game: "Minecraft",
   loader: "Paper",
   loader_version: "1.20.4-497",
   mc_version: "1.20.4",
   net: { ip: null, port: 25565, domain: "srv-123.modrinth.gg" },
+  backup_quota: 5,
+  used_backup_quota: 1,
+  notices: [],
+  flows: { intro: false },
+  is_medal: false,
 };
 
 const FIXTURE_SERVER_DETAIL: ServerDetail = {
