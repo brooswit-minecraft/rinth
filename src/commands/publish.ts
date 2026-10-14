@@ -16,6 +16,7 @@
 // any project/version lookup or upload is attempted.
 
 import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { basename } from "node:path";
 import type { Labrinth } from "@modrinth/api-client";
 import type { CreateVersionDependency, CreateVersionFile, CreateVersionRequest } from "../client/index.ts";
@@ -31,7 +32,7 @@ const USAGE =
   "Usage: rinth publish <project> --file <path.mrpack> --version <version_number> " +
   "[--name <n>] [--changelog <text> | --changelog-file <path>] [--game-version <gv>]... " +
   "[--loader <l>]... [--channel release|beta|alpha] [--featured] " +
-  "[--dependency <project_id>:<required|optional>]... [--dry-run]";
+  "[--dependency <project_id>:<required|optional>]... [--source-revision <revision>] [--verify-existing] [--dry-run]";
 
 export interface PublishFlags {
   project: string;
@@ -45,6 +46,8 @@ export interface PublishFlags {
   channel: VersionChannel;
   featured: boolean;
   dependencies: CreateVersionDependency[];
+  sourceRevision?: string;
+  verifyExisting: boolean;
   dryRun: boolean;
 }
 
@@ -80,6 +83,8 @@ export function parsePublishFlags(args: string[]): PublishFlags {
   let channel: string | undefined;
   let featured = false;
   let dryRun = false;
+  let sourceRevision: string | undefined;
+  let verifyExisting = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -105,6 +110,10 @@ export function parsePublishFlags(args: string[]): PublishFlags {
       featured = true;
     } else if (arg === "--dry-run") {
       dryRun = true;
+    } else if (arg === "--source-revision") {
+      sourceRevision = requireValue(args, ++i, "--source-revision");
+    } else if (arg === "--verify-existing") {
+      verifyExisting = true;
     } else if (arg !== undefined && arg.startsWith("--")) {
       throw new CliError(`Usage: unrecognized flag ${arg}`, ExitCode.Usage);
     } else if (arg !== undefined) {
@@ -140,8 +149,56 @@ export function parsePublishFlags(args: string[]): PublishFlags {
     channel: (channel as VersionChannel | undefined) ?? "release",
     featured,
     dependencies,
+    sourceRevision,
+    verifyExisting,
     dryRun,
   };
+}
+
+const SOURCE_REVISION_PREFIX = "Source-Revision: ";
+
+function withSourceRevision(changelog: string, sourceRevision: string | undefined): string {
+  if (!sourceRevision) return changelog;
+  return `${changelog}${changelog ? "\n\n" : ""}${SOURCE_REVISION_PREFIX}${sourceRevision}`;
+}
+
+function hasSourceRevision(changelog: string, sourceRevision: string | undefined): boolean {
+  return sourceRevision === undefined || changelog.split("\n").includes(`${SOURCE_REVISION_PREFIX}${sourceRevision}`);
+}
+
+interface PublicationIdentity {
+  project: { id: string; slug: string };
+  version: { id: string; version_number: string };
+  file: { filename: string; sha512: string; size: number };
+  outcome: "published" | "verified_existing";
+}
+
+function publicationIdentity(
+  project: Labrinth.Projects.v2.Project,
+  version: Labrinth.Versions.v2.Version,
+  filename: string,
+  sha512: string,
+  outcome: PublicationIdentity["outcome"],
+): PublicationIdentity {
+  const file = version.files.find((candidate) => candidate.filename === filename && candidate.hashes.sha512 === sha512);
+  if (!file) {
+    throw new CliError(
+      `Publication conflict: version ${version.id} does not contain ${filename} with the intended SHA-512`,
+      ExitCode.ApiError,
+      { reason: "artifact_mismatch" },
+    );
+  }
+  return {
+    project: { id: project.id, slug: project.slug },
+    version: { id: version.id, version_number: version.version_number },
+    file: { filename: file.filename, sha512: file.hashes.sha512, size: file.size },
+    outcome,
+  };
+}
+
+function printPublication(identity: PublicationIdentity, json: boolean): void {
+  if (json) printJson(identity);
+  else printHuman(`${identity.outcome}: ${identity.project.id} ${identity.version.id} ${identity.file.filename} sha512=${identity.file.sha512}`);
 }
 
 function readChangelog(flags: PublishFlags): string {
@@ -163,7 +220,7 @@ async function run(args: string[], ctx: CommandContext): Promise<number> {
 
   const fileBytes = readFileSync(flags.file);
   const fileName = basename(flags.file);
-  const changelog = readChangelog(flags);
+  const changelog = withSourceRevision(readChangelog(flags), flags.sourceRevision);
 
   if (flags.dryRun) {
     const data: CreateVersionRequest = {
@@ -202,6 +259,18 @@ async function run(args: string[], ctx: CommandContext): Promise<number> {
   const existingVersions = await ctx.transport.listVersions(project.id);
   const duplicate = existingVersions.find((v) => v.version_number === flags.version);
   if (duplicate) {
+    if (flags.verifyExisting) {
+      const sha512 = createHash("sha512").update(fileBytes).digest("hex");
+      if (!hasSourceRevision(duplicate.changelog, flags.sourceRevision)) {
+        throw new CliError(
+          `Publication conflict: version ${flags.version} exists but its source revision does not match`,
+          ExitCode.ApiError,
+          { reason: "source_revision_mismatch" },
+        );
+      }
+      printPublication(publicationIdentity(project, duplicate, fileName, sha512, "verified_existing"), ctx.json);
+      return ExitCode.Ok;
+    }
     throw new CliError(
       `Version ${flags.version} already exists on ${project.id} (id ${duplicate.id}, version_number ${duplicate.version_number})`,
       ExitCode.ApiError,
@@ -224,12 +293,11 @@ async function run(args: string[], ctx: CommandContext): Promise<number> {
   const file: CreateVersionFile = { name: fileName, data: fileBytes };
 
   const created = await ctx.transport.createVersion(data, file);
-
-  if (ctx.json) {
-    printJson(created);
-  } else {
-    printHuman(`${created.id}  https://modrinth.com/project/${project.slug}/version/${created.id}`);
-  }
+  const sha512 = createHash("sha512").update(fileBytes).digest("hex");
+  // Do not treat a successful upload response as authoritative identity: the
+  // API is the source of truth for the stored file hashes, so read it back.
+  const readBack = await ctx.transport.getVersion(created.id);
+  printPublication(publicationIdentity(project, readBack, fileName, sha512, "published"), ctx.json);
 
   return ExitCode.Ok;
 }
