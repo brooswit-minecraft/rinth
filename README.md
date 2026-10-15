@@ -1584,7 +1584,8 @@ rinth publish <project> --file <path.mrpack> --version <version_number>
   [--name <n>] [--changelog <text> | --changelog-file <path>]
   [--game-version <gv>]... [--loader <l>]...
   [--channel release|beta|alpha] [--featured]
-  [--dependency <project_id>:<required|optional>]... [--dry-run]
+  [--dependency <project_id>:<required|optional>]... [--source-revision <revision>]
+  [--verify-existing] [--dry-run]
 ```
 
 `POST https://api.modrinth.com/v2/version` (multipart: a JSON `data` part
@@ -1607,13 +1608,23 @@ versions (`Transport#listVersions` — the same method `versions list`/
 `version_number`. If one exists, it fails with **exit 5** naming the
 existing version's number and id, and the upload is never attempted.
 
+**Retry-safe publication**: add `--verify-existing` to make that duplicate
+path a verification instead. RINTH calculates the local file's SHA-512 and
+succeeds only if the existing version has a file with the same filename and
+hash. `--source-revision <revision>` stores a `Source-Revision:` trailer in
+the created changelog and requires the same trailer on a verified retry.
+Any artifact or source-revision mismatch fails with exit 5 and a stable JSON
+reason (`artifact_mismatch` or `source_revision_mismatch`); it never uploads.
+
 ```sh
 $ rinth publish sodium --file build/sodium-fabric-0.6.0+mc1.20.4.mrpack \
     --version 0.6.0 --game-version 1.20.4 --loader fabric --channel release
-v3xzKq7m  https://modrinth.com/project/sodium/version/v3xzKq7m
+published: AANobbMI v3xzKq7m sodium-fabric-0.6.0+mc1.20.4.mrpack sha512=<hash>
 ```
 
-**`--json`** prints the created version object, unmodified API shape.
+**`--json`** prints stable publication identity: canonical project id/slug,
+version id/number, filename, SHA-512, byte size, and outcome (`published` or
+`verified_existing`). This is the supported workflow read-back contract.
 
 **`--dry-run`** prints the request payload that would be sent — the
 `data` JSON plus the file part name and size — and exits 0 **without
