@@ -56,6 +56,7 @@ const FULL_SERVER: Archon.Servers.v0.Server = {
   flows: { intro: false },
   is_medal: false,
   current_user_permissions: 0,
+  medal_expires: "2026-12-31T00:00:00Z",
 };
 
 const FIXTURE_PROJECT: Labrinth.Projects.v2.Project = {
@@ -258,17 +259,26 @@ describe("toPublicServer", () => {
       id: "srv_123",
       name: "My Server",
       status: "available",
+      suspension_reason: null,
       game: "Minecraft",
       loader: "Paper",
       loader_version: "1.20.4-497",
       mc_version: "1.20.4",
       net: { ip: null, port: 25565, domain: "srv-123.modrinth.gg" },
+      backup_quota: 5,
+      used_backup_quota: 1,
+      notices: [],
+      flows: { intro: false },
+      is_medal: false,
+      medal_expires: "2026-12-31T00:00:00Z",
     });
   });
 
   test("never carries sftp/node credentials through", () => {
     const serialized = JSON.stringify(toPublicServer(FULL_SERVER));
     expect(serialized).not.toContain("secret");
+    expect(serialized).not.toContain("sftp_");
+    expect(serialized).not.toContain("node");
   });
 });
 
@@ -278,11 +288,18 @@ describe("toServerDetail", () => {
       id: "srv_123",
       name: "My Server",
       status: "available",
+      suspension_reason: null,
       game: "Minecraft",
       loader: "Paper",
       loader_version: "1.20.4-497",
       mc_version: "1.20.4",
       net: { ip: null, port: 25565, domain: "srv-123.modrinth.gg" },
+      backup_quota: 5,
+      used_backup_quota: 1,
+      notices: [],
+      flows: { intro: false },
+      is_medal: false,
+      medal_expires: "2026-12-31T00:00:00Z",
       datacenter: "us-east",
       upstream: null,
     });
@@ -306,6 +323,8 @@ describe("toServerDetail", () => {
 
     expect(printed).not.toContain("hunter2");
     expect(printed).not.toContain("secret");
+    expect(printed).not.toContain("sftp_");
+    expect(printed).not.toContain("node");
   });
 });
 
